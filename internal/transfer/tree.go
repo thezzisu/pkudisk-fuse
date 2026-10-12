@@ -218,10 +218,13 @@ func (s Service) uploadTree(ctx context.Context, local, remote string, overwrite
 			file.Close()
 			return result, fmt.Errorf("%s: local file changed after scanning", node.rel)
 		}
-		_, err = s.Backend.Upload(ctx, folder.ID, node.entry.Name, previous, progressReaderAt{file, progress}, node.entry.Size, node.info.ModTime())
+		_, fast, uploadErr := s.uploadFile(ctx, folder.ID, node.entry.Name, previous, file, node.entry.Size, node.info.ModTime(), progress)
 		file.Close()
-		if err != nil {
-			return result, fmt.Errorf("%s: %w", node.rel, err)
+		if uploadErr != nil {
+			return result, fmt.Errorf("%s: %w", node.rel, uploadErr)
+		}
+		if fast {
+			result.FastFiles++
 		}
 		result.Bytes += node.entry.Size
 		result.Files++

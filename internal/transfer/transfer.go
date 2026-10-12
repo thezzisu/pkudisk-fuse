@@ -30,6 +30,7 @@ type Phase string
 
 const (
 	Preparing    Phase = "preparing"
+	Hashing      Phase = "hashing"
 	Transferring Phase = "transferring"
 	Finalizing   Phase = "finalizing"
 	Extracting   Phase = "extracting"
@@ -47,10 +48,12 @@ type Result struct {
 	Local, Remote string
 	Bytes         int64
 	Files, Dirs   int
+	FastFiles     int
 }
 type Service struct {
 	Backend             Backend
 	Archive, ViaArchive bool
+	Fast                bool
 }
 
 func (s Service) Upload(ctx context.Context, local, remote string, overwrite bool, observe Observer) (Result, error) {
@@ -103,13 +106,44 @@ func (s Service) Upload(ctx context.Context, local, remote string, overwrite boo
 		}
 	}
 	progress := newReporter(info.Size(), observe)
-	entry, err := s.Backend.Upload(ctx, parent, name, existing, progressReaderAt{file, progress}, info.Size(), info.ModTime())
+	entry, fast, err := s.uploadFile(ctx, parent, name, existing, file, info.Size(), info.ModTime(), progress)
 	if err != nil {
 		return result, err
 	}
 	result.Entry, result.Bytes, result.Files = entry, info.Size(), 1
+	if fast {
+		result.FastFiles = 1
+	}
 	progress.complete()
 	return result, nil
+}
+
+type fastUploader interface {
+	FastUpload(context.Context, string, string, io.ReaderAt, int64, time.Time, func(int64)) (bool, anyshare.Entry, error)
+}
+
+func (s Service) uploadFile(ctx context.Context, parent, name string, existing *anyshare.Entry, data io.ReaderAt, size int64, mtime time.Time, progress *reporter) (anyshare.Entry, bool, error) {
+	if s.Fast && existing == nil {
+		backend, ok := s.Backend.(fastUploader)
+		if !ok {
+			return anyshare.Entry{}, false, errors.New("fast upload is unavailable for this backend")
+		}
+		matched, entry, err := backend.FastUpload(ctx, parent, name, data, size, mtime, func(done int64) {
+			if progress.observe != nil {
+				progress.observe(Progress{Phase: Hashing, Done: done, Total: size})
+			}
+		})
+		if err != nil {
+			return anyshare.Entry{}, false, err
+		}
+		if matched {
+			progress.addBytes(size)
+			return entry, true, nil
+		}
+	}
+	progress.resume()
+	entry, err := s.Backend.Upload(ctx, parent, name, existing, progressReaderAt{data, progress}, size, mtime)
+	return entry, false, err
 }
 
 func (s Service) uploadDestination(ctx context.Context, basename, remote string) (parent, name string, existing *anyshare.Entry, err error) {
@@ -273,6 +307,9 @@ func newReporter(total int64, observe Observer) *reporter {
 	return r
 }
 func (r *reporter) add(n int) {
+	r.addBytes(int64(n))
+}
+func (r *reporter) addBytes(n int64) {
 	if n <= 0 {
 		return
 	}
@@ -281,10 +318,17 @@ func (r *reporter) add(n int) {
 	if r.state.Phase == Complete {
 		return
 	}
-	r.state.Done += min(int64(n), r.state.Total-r.state.Done)
+	r.state.Done += min(n, r.state.Total-r.state.Done)
 	if r.state.Done == r.state.Total {
 		r.state.Phase = Finalizing
 	}
+	if r.observe != nil {
+		r.observe(r.state)
+	}
+}
+func (r *reporter) resume() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.observe != nil {
 		r.observe(r.state)
 	}

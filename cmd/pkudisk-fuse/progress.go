@@ -19,6 +19,7 @@ type cliProgress struct {
 	job    bool
 	total  int64
 	sizes  sizeFormat
+	phase  transfer.Phase
 }
 
 func newCLIProgress(direction string, output io.Writer, sizes sizeFormat) *cliProgress {
@@ -37,11 +38,12 @@ func (p *cliProgress) Update(state transfer.Progress) {
 	if total < 0 {
 		total = -1
 	}
-	if p.bar == nil || p.job != job || p.total != total {
+	if p.bar == nil || p.job != job || p.total != total || p.phase != state.Phase && (p.phase == transfer.Hashing || state.Phase == transfer.Hashing) {
 		if p.bar != nil {
 			_ = p.bar.Clear()
 		}
 		p.job, p.total = job, total
+		p.phase = state.Phase
 		// Reserve the last step for publication/file installation. This keeps
 		// the displayed percentage below 100% until the operation succeeds.
 		maximum := total + 1
@@ -70,6 +72,9 @@ func (p *cliProgress) Update(state transfer.Progress) {
 		detail = p.sizes.value(state.Done) + " (total unknown)"
 	}
 	p.bar.Describe(p.label + " " + detail)
+	if state.Phase == transfer.Hashing {
+		p.bar.Describe(p.label + " hashing " + detail)
+	}
 	if state.Phase == transfer.Complete {
 		_ = p.bar.Finish()
 	} else {

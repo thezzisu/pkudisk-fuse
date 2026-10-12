@@ -71,6 +71,11 @@ func (m *tuiModel) virtual(id string) bool {
 }
 
 func (m *tuiModel) accountContext() (string, string) {
+	if m.mode == managementMode && m.management != nil && m.management.target.namespace != nil {
+		if account, _, err := m.management.target.namespace.Account(m.management.target.scopeID); err == nil {
+			return account.Name, account.Server
+		}
+	}
 	if namespace, ok := m.backend.(*vfs.AccountBackend); ok && m.location.entry != nil {
 		if account, _, err := namespace.Account(m.location.entry.ID); err == nil {
 			return account.Name, account.Server

@@ -33,6 +33,9 @@ The driver uses these JSON calls:
 | delete | `POST /api/efast/v1/file/delete` or `dir/delete` |
 | rename | `POST /api/efast/v1/file/rename` or `dir/rename` |
 | move | `POST /api/efast/v1/file/move` or `dir/move` |
+| recycle listing | `POST /api/efast/v1/recycle/list` |
+| recycle restore/permanent delete | `POST /api/efast/v1/recycle/restore` / `recycle/delete` |
+| file history/restore | `POST /api/efast/v1/file/revisions` / `file/restorerevision` |
 
 Downloads begin with `POST /api/efast/v1/file/osdownload`. The returned signed request is restricted to HTTPS on an HTTPS server and is used with a checked `Range` header for `ReadAt`.
 
@@ -129,11 +132,20 @@ the local machine. Existing-name behavior remains the server's policy. Server
 permissions, approval requirements and storage-service restrictions can reject
 copy even when ordinary upload/download is allowed.
 
-The inspected official client also contains recycle-bin, version-history,
-batch-metadata and instant-upload protocols. They remain documented in the
-read-only discovery report until their mutation/fallback semantics justify a
-small user-facing interface. No offline URL, BitTorrent or magnet task API was
-found in the official client.
+Recycle-bin, version-history and instant-upload APIs are exposed by the CLI and
+TUI. Recycle entries use the IDs returned by `/recycle/list`, which are separate
+from the active object's ID. `recycle restore` uses `ondup:1` by default and
+`ondup:2` for `--rename`; `recycle remove` calls the permanent delete endpoint.
+The server may delay list updates and its offset-based recycle listing has no
+stable cursor; the client deduplicates repeated rows and stops when a page makes
+no progress. It may retain only the current revision when version history is
+disabled for a library. `upload --fast` probes the first
+204800 bytes and length, then hashes the whole file with bounded memory and
+sends the official `md5`, eight-digit hexadecimal `crc32`, `client_mtime` in
+Unix milliseconds, destination and duplicate policy to `dupload`. A mismatch
+falls back to the ordinary revision-checked uploader; existing files never use
+the shortcut. No offline URL, BitTorrent or magnet task API was found in the
+official client.
 
 ## Internal sharing and anonymous links
 

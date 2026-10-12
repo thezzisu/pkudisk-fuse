@@ -14,7 +14,7 @@ With Go 1.26.9 or newer, install the command with:
 go install github.com/thezzisu/pkudisk-fuse/cmd/pkudisk-fuse@latest
 ```
 
-Use a version such as `@v0.4.1` instead of `@latest` to select a release. Add `GOBIN` (normally `~/go/bin`, or `%USERPROFILE%\go\bin` on Windows) to your `PATH` if needed.
+Use a version such as `@v0.4.2` instead of `@latest` to select a release. Add `GOBIN` (normally `~/go/bin`, or `%USERPROFILE%\go\bin` on Windows) to your `PATH` if needed.
 
 ```sh
 pkudisk-fuse version
@@ -72,7 +72,9 @@ long flag is available. `-h/--help` remains help on every command.
 Commands are top-level and help groups them by purpose. In v0.4.0, `quota`,
 `search` and `copy` replace `util quota/search/copy`; the `util` group and its
 old forms are removed. `share` manages internal access, and `link` manages
-external links. Commands and listing verbs have no aliases.
+external links. `delete` and `recycle` manage the server recycle bin;
+`revision` manages retained file versions. Commands and listing verbs have no
+aliases.
 
 `--account/-a` selects one saved account by its exact name. Use
 `mount --all-accounts` or `tui --all-accounts` to aggregate saved accounts;
@@ -83,6 +85,10 @@ bin/pkudisk-fuse ls -a work
 bin/pkudisk-fuse ls -b -a work
 bin/pkudisk-fuse quota -b -a work
 bin/pkudisk-fuse download '/My library/report.pdf' ./report.pdf -f -t 30m
+bin/pkudisk-fuse delete '/My library/old-report.pdf'
+bin/pkudisk-fuse recycle ls
+bin/pkudisk-fuse revision ls '/My library/report.pdf'
+bin/pkudisk-fuse upload ./report.pdf '/My library/report.pdf' --fast
 ```
 
 Exit codes are `0` for success, `1` for an execution failure, and `2` for invalid commands, arguments, or flags. Results and requested help go to stdout; account announcements, errors, and CLI transfer progress go to stderr. `--json` provides JSON arrays for `ls`, `account ls`, and `recover`, including `[]` for empty results.
@@ -182,6 +188,10 @@ bin/pkudisk-fuse extract '/My library/photos.zip' '/My library/Photos-new'
 bin/pkudisk-fuse quota
 bin/pkudisk-fuse search report --in '/My library/Reports'
 bin/pkudisk-fuse copy '/My library/report.pdf' '/My library/Archive'
+bin/pkudisk-fuse delete '/My library/old-report.pdf'
+bin/pkudisk-fuse recycle ls
+bin/pkudisk-fuse revision ls '/My library/report.pdf'
+bin/pkudisk-fuse upload ./report.pdf '/My library/report.pdf' --fast
 ```
 
 Directories transfer recursively, preserving nested and empty folders. A remote folder destination uses the local basename; a local directory destination uses the remote basename. A new destination path can rename the result, and its parent must already exist. Omitting a download destination saves the remote name in the current directory, including for a `gns://` selector. Uploads reject symlinks and special files.
@@ -194,7 +204,17 @@ For directories, `--overwrite` merges trees and replaces matching files while ke
 
 `extract` runs the server's archive extractor without downloading the archive. It creates a new remote folder and waits for the server job. The server can drop empty directories and sometimes produces duplicate nested folders; duplicate output paths are detected and reported. Directory uploads therefore use the reliable direct path. Extraction errors can leave partial remote output. Cancelling extraction stops waiting, and the server job may continue. See the [archive protocol findings](docs/anyshare-protocol.md#directory-transfers-and-archives).
 
-Uploads negotiate the server's minimum and maximum part sizes and maximum part count, then grow the part size as needed. Large files use the desktop client's multipart protocol to avoid the single-request upload limit. Small and empty files use a single request. Downloads stream 512 MiB ranges with fresh signed URLs and verify the selected revision and exact size. Server quotas, administrator policies, and storage-service limits still apply; increase `--io-timeout` for long transfers. See [the size-limit investigation](docs/transfer-limits.md) for the observed limits and verification.
+Uploads negotiate the server's minimum and maximum part sizes and maximum part count, then grow the part size as needed. Large files use the desktop client's multipart protocol to avoid the single-request upload limit. Small and empty files use a single request. `upload --fast` can reuse server-side content for new files after a bounded-memory hash pass; a non-match uses the ordinary uploader and existing files always retain revision checks. Downloads stream 512 MiB ranges with fresh signed URLs and verify the selected revision and exact size. Server quotas, administrator policies, and storage-service limits still apply; increase `--io-timeout` for long transfers. See [the size-limit investigation](docs/transfer-limits.md) for the observed limits and verification.
+
+## Remote deletion and history
+
+`delete PATH` moves a remote file or recursive directory into AnyShare's recycle
+bin. `recycle ls` shows the recycle IDs and original paths; pass one of those
+IDs to `recycle restore`, or use `--rename` when the original name is occupied.
+`recycle remove` and `recycle empty` permanently delete retained objects and
+require `--yes` with `--non-interactive`. `revision ls FILE` lists versions and
+`revision restore FILE REV` restores one after confirmation. Server retention
+and library policy determine which versions are available.
 
 The `--root` option accepts either the displayed path or an AnyShare `gns://...` object ID. A folder can therefore be mounted directly:
 

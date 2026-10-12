@@ -106,6 +106,8 @@ accessible document libraries. "ls PATH" lists remote folders; "tui" opens a fil
 browser. "search" finds remote filenames; "copy" duplicates remote files or
 folders. "share" manages internal access, "link" manages anonymous links, and
 "quota" reports capacity. "recover" inspects writes retained after a mount.
+"delete" moves files to the recycle bin; "recycle" restores or permanently
+removes deleted objects; "revision" inspects and restores file history.
 
 Run "pkudisk-fuse help COMMAND" or "COMMAND --help" for usage and examples.
 Flags may appear before or after arguments. Use -- before a file name that
@@ -150,7 +152,7 @@ starts with a dash. Exit codes: 0 success, 1 execution failure, 2 usage error.`,
 		root.AddCommand(commands...)
 	}
 	add("browse", newRemoteCommand("ls"), newSearchCommand(), newRemoteCommand("tui"))
-	add("files", newRemoteCommand("upload"), newRemoteCommand("download"), newCopyCommand(), newRemoteCommand("extract"))
+	add("files", newRemoteCommand("upload"), newRemoteCommand("download"), newCopyCommand(), newRemoteCommand("extract"), newDeleteCommand(), newRecycleCommand(), newRevisionCommand())
 	add("sharing", newShareCommand(), newLinkCommand())
 	add("local", newRemoteCommand("mount"), newRecoverCommand())
 	add("account", newAccountCommand(), newQuotaCommand())
@@ -163,7 +165,7 @@ starts with a dash. Exit codes: 0 success, 1 execution failure, 2 usage error.`,
 
 func newRemoteCommand(name string) *cobra.Command {
 	var credentials authFlags
-	var overwrite, jsonOutput, archive, viaArchive bool
+	var overwrite, jsonOutput, archive, viaArchive, fast bool
 	var allAccounts bool
 	var sizes sizeFormat
 	timeout := 10 * time.Minute
@@ -202,12 +204,19 @@ Uploads send each file directly, using multipart uploads for large files with
 no fixed client file-size cap. The server's archive extractor does not reliably
 preserve nested/empty folders, so directory uploads use this direct path.
 
+--fast first checks the first 200 KiB MD5 and file size. A possible match reads
+the file once to calculate full MD5/CRC32 with bounded memory, then asks the
+server to reuse existing content without sending file bytes. A non-match falls
+back to ordinary upload. Hashing has its own progress phase. Existing files
+always use revision-checked ordinary upload, including with --fast --overwrite.
+
 Progress goes to stderr. --io-timeout bounds the entire operation, including
 scanning and transferring the tree. Account quotas and file policies apply.
 
 ` + remoteHelp
 		cmd.Example = "  pkudisk-fuse upload ./report.pdf '/My library/Reports/'\n  pkudisk-fuse upload ./Photos '/My library/'\n  pkudisk-fuse upload ./Photos '/My library/' --overwrite"
 		cmd.Flags().BoolVarP(&overwrite, "overwrite", "f", false, "replace matching files and merge directories; keep unrelated entries")
+		cmd.Flags().BoolVar(&fast, "fast", false, "try hash-based instant upload for new files; fall back on a non-match")
 	case "download":
 		cmd.Use = "download REMOTE-PATH [LOCAL-DESTINATION]"
 		cmd.Args = cobra.RangeArgs(1, 2)
@@ -260,7 +269,7 @@ continue because the official protocol exposes no job cancellation endpoint.
 		cmd.Example = "  pkudisk-fuse extract '/My library/photos.zip' '/My library/'\n  pkudisk-fuse extract '/My library/photos.zip' '/My library/Photos-new'"
 	case "tui":
 		cmd.Short = "Open an interactive remote file browser"
-		cmd.Long = "Browse remote libraries with a searchable list and use a local file picker\nfor uploads. Downloads use an editable destination. Transfers show progress\nand can be cancelled; a terminal is required.\n\nKeys: arrows/j/k move, Enter opens, Backspace returns to the parent, / filters,\nu uploads files/folders, d downloads files/folders, a saves a folder ZIP,\nv transfers a folder via ZIP, x extracts a remote archive, r refreshes,\ns opens sharing (internal links, recipients, external links and revocation),\n? shows help, Esc cancels, q quits.\nThe screen shows the selected account and remote path."
+		cmd.Long = "Browse remote libraries with a searchable list and use a local file picker\nfor uploads. Downloads use an editable destination. Transfers show progress\nand can be cancelled; a terminal is required.\n\nKeys: arrows/j/k move, Enter opens, Backspace returns to the parent, / filters,\nu uploads files/folders, d downloads files/folders, a saves a folder ZIP,\nv transfers a folder via ZIP, x extracts a remote archive, r refreshes,\ns opens sharing (internal links, recipients, external links and revocation),\nDelete deletes into the recycle bin, b opens the current/selected library's\nrecycle bin, H opens a file's version history, F toggles instant upload\n(off by default; new files only), ? shows help, Esc cancels, q quits.\nRecycle restoration, permanent removal/emptying and version restoration\nshow a confirmation. The screen shows the selected account and remote path."
 		cmd.Example = "  pkudisk-fuse tui\n  pkudisk-fuse tui --account work --io-timeout 30m"
 		cmd.Long += "\n\n--all-accounts shows saved accounts as top-level directories, followed by\neach account's libraries. Entering an account changes the displayed account\nand routes uploads, downloads, extraction and sharing to that session.\nAccount directories are virtual; open a library before file operations.\nAll saved accounts must authenticate and list their libraries at startup.\nThe saved default stays unchanged. --all-accounts cannot be combined with\n--account, --server, explicit credentials or --no-save."
 		cmd.Example += "\n  pkudisk-fuse tui --all-accounts"
@@ -426,7 +435,7 @@ but omit credentials, request bodies and signed URL paths/queries.
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			return runTransfer(ctx, client, name, args[0], destination, overwrite, archive, viaArchive, sizes, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runTransfer(ctx, client, name, args[0], destination, overwrite, archive, viaArchive, fast, sizes, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		case "tui":
 			return runTUI(cmd.Context(), client, account, server, timeout, sizes, cmd.InOrStdin(), cmd.OutOrStdout())
 		}

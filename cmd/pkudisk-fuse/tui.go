@@ -67,6 +67,7 @@ const (
 	pathMode
 	confirmMode
 	sharingMode
+	managementMode
 )
 
 type directoryMsg struct {
@@ -121,6 +122,7 @@ type tuiModel struct {
 	activity            string
 	conflict            string
 	sharing             *tuiSharing
+	management          *tuiManagement
 }
 
 func interactiveIO(in io.Reader, out io.Writer) bool {
@@ -171,6 +173,10 @@ func newTUIModel(ctx context.Context, backend browserBackend, account, server st
 			key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "download folder via ZIP")),
 			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "extract remote archive")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "share / links / revoke")),
+			key.NewBinding(key.WithKeys("delete"), key.WithHelp("delete", "delete into recycle bin")),
+			key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "library recycle bin")),
+			key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "file version history")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "toggle instant upload")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 			key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "root")),
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel operation")),
@@ -310,6 +316,8 @@ func (m *tuiModel) stopOperation() {
 func (m *tuiModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.layout()
 	switch msg := message.(type) {
+	case managementMsg:
+		return m, m.managementResult(msg)
 	case sharingMsg:
 		return m, m.sharingResult(msg)
 	case tea.WindowSizeMsg:
@@ -382,6 +390,9 @@ func (m *tuiModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.result.Entry.Dir {
 			m.status += fmt.Sprintf(" • %d files, %d directories", msg.result.Files, msg.result.Dirs)
 		}
+		if msg.result.FastFiles > 0 {
+			m.status += fmt.Sprintf(" • %d instant upload(s)", msg.result.FastFiles)
+		}
 		if msg.direction == "upload" || msg.direction == "extract" {
 			status := m.status
 			location := m.currentLocation()
@@ -413,7 +424,7 @@ func (m *tuiModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.remote, cmd = m.remote.Update(msg)
 			return m, cmd
 		}
-		if k == "q" && m.mode != pathMode && (m.mode != sharingMode || m.busy) {
+		if k == "q" && m.mode != pathMode && (m.mode != sharingMode && m.mode != managementMode || m.busy) {
 			return m, m.quit()
 		}
 		if m.busy {
@@ -428,8 +439,15 @@ func (m *tuiModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == sharingMode {
 			return m, m.sharingKey(msg)
 		}
+		if m.mode == managementMode {
+			return m, m.managementKey(msg)
+		}
 		switch m.mode {
 		case pickerMode:
+			if k == "F" {
+				m.toggleFastUpload()
+				return m, nil
+			}
 			if k == "esc" {
 				m.mode = browseMode
 				return m, nil
@@ -448,6 +466,10 @@ func (m *tuiModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		case pathMode:
+			if k == "ctrl+f" && m.inputDirection == "upload" {
+				m.toggleFastUpload()
+				return m, nil
+			}
 			if k == "esc" {
 				m.mode = browseMode
 				m.input.Blur()
@@ -483,6 +505,15 @@ func (m *tuiModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		default:
 			switch k {
+			case "delete":
+				return m, m.openManagement("delete")
+			case "b":
+				return m, m.openManagement("recycle")
+			case "H":
+				return m, m.openManagement("revision")
+			case "F":
+				m.toggleFastUpload()
+				return m, nil
 			case "s":
 				return m, m.openSharing()
 			case "enter", "l":
@@ -573,6 +604,11 @@ func (m *tuiModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.sharing.choices, cmd = m.sharing.choices.Update(message)
 		return m, cmd
 	}
+	if m.mode == managementMode {
+		var cmd tea.Cmd
+		m.management.choices, cmd = m.management.choices.Update(message)
+		return m, cmd
+	}
 	var cmd tea.Cmd
 	m.remote, cmd = m.remote.Update(message)
 	return m, cmd
@@ -592,6 +628,9 @@ func (m *tuiModel) quit() tea.Cmd {
 func (m *tuiModel) layout() {
 	if m.sharing != nil {
 		m.sharing.layout(m.width, m.height)
+	}
+	if m.management != nil {
+		m.management.layout(m.width, m.height)
 	}
 	overhead := 8
 	if m.busy {
@@ -624,10 +663,12 @@ func (m *tuiModel) View() tea.View {
 	header := ansi.Truncate(accent.Render("PKU NetDisk")+"  Account: "+tuiText(account), m.width-4, "…") + "\n" + muted.Render(ansi.Truncate(tuiText(server), m.width-4, "…")) + "\n" + ansi.Truncate("Remote: "+tuiText(m.location.path), m.width-4, "…") + "\n"
 	var content string
 	switch m.mode {
+	case managementMode:
+		content = m.management.view(m.sizes)
 	case sharingMode:
 		content = m.sharing.view()
 	case pickerMode:
-		content = accent.Render("Choose a local file or directory to upload") + "\nLocal: " + tuiText(m.picker.CurrentDirectory) + "\n\n" + m.picker.View() + "\n\n↑/↓ move • Enter open folder • Space select • Backspace parent\np type path • Esc cancel"
+		content = accent.Render("Choose a local file or directory to upload") + "\nLocal: " + tuiText(m.picker.CurrentDirectory) + "\nInstant upload: " + fastUploadLabel(m.service.Fast) + "\n\n" + m.picker.View() + "\n\n↑/↓ move • Enter open folder • Space select • Backspace parent\np type path • F toggle instant upload • Esc cancel"
 	case pathMode:
 		label := "Enter a local path"
 		mode := "direct transfer"
@@ -639,6 +680,9 @@ func (m *tuiModel) View() tea.View {
 		if m.inputDirection == "extract" {
 			label = "Enter a remote destination (new folder)"
 			mode = "Server extraction may omit empty folders; cancellation only stops waiting"
+		}
+		if m.inputDirection == "upload" {
+			mode += " • instant upload " + fastUploadLabel(m.service.Fast) + " (Ctrl+F toggles)"
 		}
 		content = accent.Render(label) + "\nMode: " + mode + "\n" + m.input.View() + "\n\nEnter continue • Esc cancel"
 	case confirmMode:
@@ -665,6 +709,9 @@ func (m *tuiModel) View() tea.View {
 			phase := ""
 			if state.Phase == transfer.Finalizing {
 				phase = "  finishing..."
+			}
+			if state.Phase == transfer.Hashing {
+				phase = "  hashing locally..."
 			}
 			detail := m.sizes.value(state.Done) + " / " + m.sizes.value(state.Total) + phase
 			if state.Total < 0 {

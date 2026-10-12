@@ -21,13 +21,68 @@ const tuiAccountLibrary = "gns://shared"
 
 type tuiAccountClient struct {
 	tuiShareBackend
-	t               *testing.T
-	owner           string
-	objects         map[string]anyshare.Entry
-	contents        map[string][]byte
-	shares, uploads int
-	extractions     int
-	failDownload    bool
+	t                                                               *testing.T
+	owner                                                           string
+	objects                                                         map[string]anyshare.Entry
+	contents                                                        map[string][]byte
+	shares, uploads                                                 int
+	extractions                                                     int
+	failDownload                                                    bool
+	recycled                                                        map[string]anyshare.RecycleEntry
+	deletions, restores, removals, revisionRestores, instantUploads int
+}
+
+func (b *tuiAccountClient) Delete(_ context.Context, entry anyshare.Entry) error {
+	b.checkID(entry.ID)
+	b.deletions++
+	delete(b.objects, entry.ID)
+	if b.recycled == nil {
+		b.recycled = map[string]anyshare.RecycleEntry{}
+	}
+	entry.ID = tuiAccountLibrary + "/bin/recycled"
+	b.recycled[entry.ID] = anyshare.RecycleEntry{Entry: entry, Path: "gns://Library"}
+	return nil
+}
+func (b *tuiAccountClient) RecycleList(_ context.Context, id string) ([]anyshare.RecycleEntry, error) {
+	b.checkID(id)
+	items := []anyshare.RecycleEntry{}
+	for _, entry := range b.recycled {
+		items = append(items, entry)
+	}
+	return items, nil
+}
+func (b *tuiAccountClient) RecycleRestore(_ context.Context, id string, _ bool) (anyshare.Entry, error) {
+	b.checkID(id)
+	b.restores++
+	entry := b.recycled[id].Entry
+	delete(b.recycled, id)
+	entry.ID = tuiAccountLibrary + "/same"
+	b.objects[entry.ID] = entry
+	return entry, nil
+}
+func (b *tuiAccountClient) RecycleDelete(_ context.Context, id string) error {
+	b.checkID(id)
+	b.removals++
+	delete(b.recycled, id)
+	return nil
+}
+func (b *tuiAccountClient) Revisions(_ context.Context, entry anyshare.Entry) ([]anyshare.Revision, error) {
+	b.checkID(entry.ID)
+	return []anyshare.Revision{{Rev: "old", Name: entry.Name, Editor: b.owner, Size: 5}}, nil
+}
+func (b *tuiAccountClient) RestoreRevision(_ context.Context, entry anyshare.Entry, rev string) error {
+	b.checkID(entry.ID)
+	b.revisionRestores++
+	return nil
+}
+func (b *tuiAccountClient) FastUpload(ctx context.Context, parent, name string, data io.ReaderAt, size int64, mtime time.Time, observe func(int64)) (bool, anyshare.Entry, error) {
+	b.checkID(parent)
+	if observe != nil {
+		observe(size)
+	}
+	b.instantUploads++
+	entry, err := b.Upload(ctx, parent, name, nil, data, size, mtime)
+	return true, entry, err
 }
 
 func (b *tuiAccountClient) checkID(id string) {

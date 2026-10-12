@@ -27,7 +27,7 @@ func TestHelpIsOfflineAndConsistent(t *testing.T) {
 	path := filepath.Join(directory, "pkudisk-fuse")
 	os.Mkdir(path, 0700)
 	os.WriteFile(filepath.Join(path, "accounts.json"), []byte("not JSON"), 0600)
-	paths := [][]string{{"mount"}, {"ls"}, {"upload"}, {"download"}, {"extract"}, {"recover"}, {"tui"}, {"quota"}, {"search"}, {"copy"}, {"share"}, {"share", "add"}, {"share", "ls"}, {"share", "link"}, {"share", "search"}, {"share", "remove"}, {"link"}, {"link", "add"}, {"link", "ls"}, {"link", "remove"}, {"account"}, {"account", "add"}, {"account", "ls"}, {"account", "default"}, {"account", "remove"}, {"version"}, {"completion"}}
+	paths := [][]string{{"mount"}, {"ls"}, {"upload"}, {"download"}, {"extract"}, {"recover"}, {"tui"}, {"quota"}, {"search"}, {"copy"}, {"delete"}, {"recycle"}, {"recycle", "ls"}, {"recycle", "restore"}, {"recycle", "remove"}, {"recycle", "empty"}, {"revision"}, {"revision", "ls"}, {"revision", "restore"}, {"share"}, {"share", "add"}, {"share", "ls"}, {"share", "link"}, {"share", "search"}, {"share", "remove"}, {"link"}, {"link", "add"}, {"link", "ls"}, {"link", "remove"}, {"account"}, {"account", "add"}, {"account", "ls"}, {"account", "default"}, {"account", "remove"}, {"version"}, {"completion"}}
 	for _, path := range paths {
 		t.Run(strings.Join(path, "/"), func(t *testing.T) {
 			direct, stderr, err := testExecute(append(append([]string{}, path...), "--help")...)
@@ -128,7 +128,7 @@ func TestCommandDistributionAndCompletionHaveNoAliases(t *testing.T) {
 	root.InitDefaultHelpCmd()
 	want := map[string]string{
 		"ls": "browse", "search": "browse", "tui": "browse",
-		"upload": "files", "download": "files", "copy": "files", "extract": "files",
+		"upload": "files", "download": "files", "copy": "files", "extract": "files", "delete": "files", "recycle": "files", "revision": "files",
 		"share": "sharing", "link": "sharing", "mount": "local", "recover": "local",
 		"account": "account", "quota": "account", "completion": "tools", "help": "tools", "version": "tools",
 	}

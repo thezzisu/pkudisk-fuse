@@ -9,8 +9,8 @@ import (
 	"github.com/thezzisu/pkudisk-fuse/internal/transfer"
 )
 
-func runTransfer(ctx context.Context, client *anyshare.Client, direction, source, destination string, overwrite, archive, viaArchive bool, sizes sizeFormat, out, errOut io.Writer) error {
-	service := transfer.Service{Backend: client, Archive: archive, ViaArchive: viaArchive}
+func runTransfer(ctx context.Context, client *anyshare.Client, direction, source, destination string, overwrite, archive, viaArchive, fast bool, sizes sizeFormat, out, errOut io.Writer) error {
+	service := transfer.Service{Backend: client, Archive: archive, ViaArchive: viaArchive, Fast: fast}
 	progress := newCLIProgress(direction, errOut, sizes)
 	var result transfer.Result
 	var err error
@@ -38,6 +38,9 @@ func runTransfer(ctx context.Context, client *anyshare.Client, direction, source
 		fmt.Fprintf(out, "%s %s -> %s (%s", verb, from, to, sizes.label(result.Bytes))
 		if result.Entry.Dir {
 			fmt.Fprintf(out, ", %d files, %d directories", result.Files, result.Dirs)
+		}
+		if result.FastFiles > 0 {
+			fmt.Fprintf(out, ", %d instant upload(s)", result.FastFiles)
 		}
 		fmt.Fprintln(out, ")")
 	}
