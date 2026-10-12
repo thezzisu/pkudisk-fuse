@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/thezzisu/pkudisk-fuse/internal/localfile"
 	"github.com/thezzisu/pkudisk-fuse/internal/vfs"
@@ -17,7 +18,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const mountPlatformHelp = "Windows requires WinFsp (https://winfsp.dev/rel/). Choose an unused drive\nletter such as P:, or an empty local directory. Ctrl-C unmounts."
+const mountPlatformHelp = "Windows requires WinFsp (https://winfsp.dev/rel/). Choose an unused drive\nletter such as P:, or an empty local directory. Ctrl-C unmounts.\nFor a drive letter, --background returns after mounting without a console;\nuse 'unmount P:' to stop it. 'service install P:' enables mounting at boot."
 const mountPlatformExample = "  pkudisk-fuse mount P:\n  pkudisk-fuse mount P: --account work --read-only\n  pkudisk-fuse mount P: --root '/My library/Reports'"
 const mountPlatformPoint = "P:"
 
@@ -100,7 +101,11 @@ func mountFileSystem(ctx context.Context, source *accountSource, opts mountOptio
 	host.SetCapOpenTrunc(true)
 	host.SetCapReaddirPlus(true)
 	host.SetUseIno(true)
-	arguments := append(vfs.WinFspMountOptions(), "-o", fmt.Sprintf("fsname=PKUNetDisk,volname=PKU NetDisk,attr_timeout=%g,entry_timeout=%g", opts.ttl.Seconds(), opts.ttl.Seconds()))
+	arguments := vfs.WinFspMountOptions()
+	if len(opts.driverOptions) != 0 {
+		arguments = opts.driverOptions
+	}
+	arguments = append(arguments, "-o", fmt.Sprintf("fsname=PKUNetDisk,volname=PKU NetDisk,attr_timeout=%g,entry_timeout=%g", opts.ttl.Seconds(), opts.ttl.Seconds()))
 	if opts.readOnly {
 		arguments = append(arguments, "-o", "ro")
 	}
@@ -125,7 +130,44 @@ func mountFileSystem(ctx context.Context, source *accountSource, opts mountOptio
 		return err
 	case <-adapter.Ready:
 	}
-	fmt.Fprintf(output, "Mounted PKU NetDisk at %s; cache %s. Ctrl-C unmounts.\n", point, core.CachePath())
+	if opts.ready != nil {
+		// Init runs before WinFsp publishes its drive letter.
+		for {
+			drives, err := windows.GetLogicalDrives()
+			if err != nil {
+				result = err
+				break
+			}
+			if drives&(1<<uint(point[0]-'A')) != 0 {
+				if _, err := os.Stat(point + `\`); err == nil {
+					result = opts.ready()
+					break
+				}
+			}
+			select {
+			case err := <-done:
+				return err
+			case <-ctx.Done():
+				result = ctx.Err()
+			case <-time.After(10 * time.Millisecond):
+				continue
+			}
+			break
+		}
+		if result != nil {
+			if host.Unmount() {
+				return errors.Join(result, <-done)
+			}
+			return errors.Join(result, errors.New("WinFsp unmount failed"))
+		}
+	}
+	stopHelp := "Ctrl-C unmounts."
+	if opts.workerHandles != "" {
+		stopHelp = "Use 'pkudisk-fuse unmount " + point + "' to stop."
+	} else if len(opts.driverOptions) != 0 {
+		stopHelp = "Use 'pkudisk-fuse service stop' to stop."
+	}
+	fmt.Fprintf(output, "Mounted PKU NetDisk at %s; cache %s. %s\n", point, core.CachePath(), stopHelp)
 	maintenanceFailed, stopMaintenance := source.maintain(ctx, opts.refreshInterval, output)
 	defer stopMaintenance()
 	select {

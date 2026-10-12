@@ -51,6 +51,71 @@ Mounted reads consume incoming range data progressively: a header read can finis
 
 Remote paths always use forward slashes, including on Windows. Local paths use the host's syntax. `~`, `~/...` and `~\...` expand to the current user's home directory. Windows reserved names, alternate-data-stream syntax, backslashes within a remote filename and names ending in a dot or space cannot be used as local filenames. The mount omits such names; CLI `ls` can show them, and `download REMOTE EXPLICIT-LOCAL-FILE` can save their contents under a valid name.
 
+## Windows background and boot mounts
+
+The default mount stays in the foreground. PowerShell's `&` invokes a command;
+it does not detach the process. To mount an unused drive letter without keeping
+a terminal open:
+
+```powershell
+pkudisk-fuse mount P: --background
+pkudisk-fuse unmount P:
+```
+
+Background mounting starts the same executable with Windows `CREATE_NO_WINDOW`.
+There is one Go process per mount, with no launcher script or extra executable.
+Startup waits for the actual drive letter. Authentication/driver failures return
+an error and a log path. Logs are private files at
+`%LOCALAPPDATA%\pkudisk-fuse\background\P.log` (the cache-home override applies).
+Authentication is noninteractive; run `account add` first if verification is
+needed. `--password-stdin` cannot be used with `--background`. `unmount` signals
+the existing mount to follow its normal WinFsp/cache shutdown path.
+
+For mounting at boot, including before logon, use an administrator terminal:
+
+```powershell
+pkudisk-fuse service install P:
+pkudisk-fuse service start
+pkudisk-fuse service status
+pkudisk-fuse service stop
+pkudisk-fuse service remove
+```
+
+Installation registers the native `pkudisk-fuse` Windows service with delayed
+automatic startup and a dependency on `WinFsp.Launcher`. WinFsp provides the
+service protocol and global drive mapping. Windows retries an unexpected exit
+after one minute; startup must finish within 25 seconds or exits for a retry.
+The installed executable is protected below `%PROGRAMDATA%\pkudisk-fuse-service`.
+The service runs as the dedicated virtual account `NT SERVICE\pkudisk-fuse`,
+without requiring or storing a Windows password. It still uses one Go process.
+The installing user can start, stop and query the service; changing its
+installation requires administrator privileges.
+
+Install copies the selected saved account (or `--all-accounts`) into a private
+service-owned store. It does not broaden the original account file's ACL.
+Service configuration, accounts, logs (`service.log`) and cache reside below
+`%PROGRAMDATA%\pkudisk-fuse-service\data`; only the virtual account and SYSTEM
+access that data. The mounted files allow the installing user, the service
+account and SYSTEM. The service does not prompt for verification. Stop it,
+complete `account add --replace` interactively and reinstall to refresh its
+account copy when required. Separate account stores do not share token-rotation
+locks; avoid running a user mount of the same account alongside the service.
+
+Mount tuning flags such as `--root` and `--read-only` also apply to
+`service install`. Services use their own cache and saved credentials;
+`--cache-dir`, explicit credential flags and `--background` are rejected.
+Stop before reinstalling to update the binary or accounts. Close applications
+using the drive before stopping. The stop command waits for the mount process
+to exit; interrupted writes remain subject to the existing recovery behavior.
+Removal keeps service accounts and the cache so recovery data is not deleted.
+Accessing service recovery files requires the service account or administrative
+backup access; the ordinary user's `recover` cannot bypass those ACLs.
+
+HTTP requests use Go's standard `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`
+environment variables. Background mounts inherit the launching terminal's
+environment. Services use their Windows service environment; temporary proxy
+settings in the installing terminal are not copied into the service.
+
 ## Account storage and permissions
 
 | Platform | Default account file | Default mount-cache parent |

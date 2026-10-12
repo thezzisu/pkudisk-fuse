@@ -24,7 +24,8 @@ jobs:
           - os: macos-latest
             flags: -race
           - os: windows-latest
-            flags: ''
+            # Native service tests change machine-wide WinFsp/SCM state.
+            flags: '-p 1'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -59,6 +60,7 @@ jobs:
           if ($process.ExitCode -notin @(0, 3010)) { throw "WinFsp installer exit code $($process.ExitCode)" }
           'CGO_ENABLED=0' >> $env:GITHUB_ENV
           'PKUDISK_FUSE_REQUIRE_KERNEL=1' >> $env:GITHUB_ENV
+          'PKUDISK_FUSE_REQUIRE_SERVICE=1' >> $env:GITHUB_ENV
       - name: Test
         run: go test -count=1 ${{ matrix.flags }} ./...
       - name: Cross-build supported platforms

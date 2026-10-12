@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -131,6 +132,9 @@ func TestCommandDistributionAndCompletionHaveNoAliases(t *testing.T) {
 		"upload": "files", "download": "files", "copy": "files", "extract": "files",
 		"share": "sharing", "link": "sharing", "mount": "local", "recover": "local",
 		"account": "account", "quota": "account", "completion": "tools", "help": "tools", "version": "tools",
+	}
+	if runtime.GOOS == "windows" {
+		want["service"], want["unmount"] = "local", "local"
 	}
 	if len(root.Commands()) != len(want) {
 		t.Fatal("unexpected top-level command count", len(root.Commands()))

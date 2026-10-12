@@ -98,6 +98,8 @@ bin/pkudisk-fuse mount ~/mnt/pkudisk
 
 On Windows, after installing WinFsp, use an unused drive letter: `pkudisk-fuse.exe mount P:`. `pkudisk-fuse account add` and `pkudisk-fuse tui` work on each platform without a mount driver.
 
+Windows also supports `pkudisk-fuse mount P: --background` and `pkudisk-fuse unmount P:`. The background command returns after the drive is ready; the same executable continues without a console and writes a private log. For mounting before Windows logon, run `pkudisk-fuse service install P:` from an administrator terminal, then `pkudisk-fuse service start`. See [Windows background and boot mounts](docs/platform-support.md#windows-background-and-boot-mounts) for service accounts, stopping, and recovery.
+
 For a non-interactive command, use an owner-only password file. The file must be a regular file owned by the current user with mode `0600`:
 
 ```sh

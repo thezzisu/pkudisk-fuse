@@ -12,12 +12,16 @@ import (
 )
 
 type mountOptions struct {
-	mountpoint, root, cache       string
-	readOnly, debug, verbose      bool
-	cacheLimit, partSize          int64
-	ttl, timeout, refreshInterval time.Duration
-	read                          vfs.ReadOptions
-	trace                         *diagnostic.Logger
+	mountpoint, root, cache               string
+	readOnly, debug, verbose, allAccounts bool
+	cacheLimit, partSize                  int64
+	ttl, timeout, refreshInterval         time.Duration
+	read                                  vfs.ReadOptions
+	trace                                 *diagnostic.Logger
+	background                            bool
+	workerHandles                         string
+	ready                                 func() error
+	driverOptions                         []string
 }
 
 // Use the same byte syntax in all mount size flags, including numeric bytes.
