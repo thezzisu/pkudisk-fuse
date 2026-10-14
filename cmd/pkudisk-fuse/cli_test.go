@@ -127,7 +127,7 @@ func TestCommandDistributionAndCompletionHaveNoAliases(t *testing.T) {
 	root := newRootCommand(strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 	root.InitDefaultHelpCmd()
 	want := map[string]string{
-		"ls": "browse", "search": "browse", "tui": "browse",
+		"ls": "browse", "search": "browse", "tui": "browse", "gui": "browse",
 		"upload": "files", "download": "files", "copy": "files", "extract": "files", "delete": "files", "recycle": "files", "revision": "files",
 		"share": "sharing", "link": "sharing", "mount": "local", "recover": "local",
 		"account": "account", "quota": "account", "completion": "tools", "help": "tools", "version": "tools",

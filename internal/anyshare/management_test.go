@@ -220,3 +220,54 @@ func TestFastUploadMismatchAndCancellation(t *testing.T) {
 		t.Fatal(md, crc, err)
 	}
 }
+
+func TestDestructiveOperationsRejectLibraryRootsAndMissingRevisions(t *testing.T) {
+	mutations := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/revisions") {
+			io.WriteString(w, `[{"rev":"retained","name":"report.txt","size":10}]`)
+			return
+		}
+		mutations++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client, _ := New(server.URL, &testTokenSource{token: "token"})
+	for _, id := range []string{"", "gns://library"} {
+		if err := client.Delete(context.Background(), Entry{ID: id, Dir: true}); !errors.Is(err, ErrPermission) {
+			t.Fatalf("library deletion was not blocked: %v", err)
+		}
+	}
+	if err := client.RestoreRevision(context.Background(), Entry{ID: "gns://library/file"}, "removed"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing revision was not rejected: %v", err)
+	}
+	if mutations != 0 {
+		t.Fatal("invalid operation reached a mutation endpoint")
+	}
+}
+
+type recycleDeletionFunc func(context.Context, string) error
+
+func (f recycleDeletionFunc) RecycleDelete(ctx context.Context, id string) error { return f(ctx, id) }
+
+func TestRecycleEmptyPreservesReviewedSnapshotAndPartialProgress(t *testing.T) {
+	snapshot := []RecycleEntry{{Entry: Entry{ID: "first"}}, {Entry: Entry{ID: "second"}}, {Entry: Entry{ID: "third"}}}
+	var removed []string
+	var progress []int
+	failure := errors.New("server unavailable")
+	count, err := RecycleEmpty(context.Background(), recycleDeletionFunc(func(_ context.Context, id string) error {
+		if id == "second" {
+			return failure
+		}
+		removed = append(removed, id)
+		return nil
+	}), snapshot, func(completed, total int) {
+		if total != len(snapshot) {
+			t.Fatal("snapshot size changed")
+		}
+		progress = append(progress, completed)
+	})
+	if count != 1 || !errors.Is(err, failure) || strings.Join(removed, ",") != "first" || len(progress) != 1 || progress[0] != 1 {
+		t.Fatalf("partial delete result lost: count=%d removed=%v progress=%v error=%v", count, removed, progress, err)
+	}
+}

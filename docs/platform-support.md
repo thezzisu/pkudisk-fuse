@@ -2,6 +2,14 @@
 
 The native CLI and TUI build for Linux, macOS and Windows on amd64 and arm64 without CGO. Account management, browsing, uploads and downloads do not need a filesystem driver.
 
+The `gui` command uses the same `CGO_ENABLED=0` executable on all
+six targets. It needs a graphical desktop and default browser. Linux tray
+support uses D-Bus StatusNotifierItem; desktops without a tray host use the
+browser's Exit button. macOS uses AppKit through pure Go FFI; Windows uses
+Shell_NotifyIcon. File selection and transfer dialogs run in the browser using
+Nuxt UI and browser file APIs. No native picker helper is needed. [Desktop GUI](gui.md)
+documents launchers, operations and acceptance checks.
+
 | Platform | Mount backend | Requirement |
 | --- | --- | --- |
 | Linux | go-fuse | `/dev/fuse` and `fusermount3` or `fusermount` (normally the `fuse3` package) |

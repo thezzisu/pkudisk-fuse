@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
 	"github.com/thezzisu/pkudisk-fuse/internal/auth"
+	"github.com/thezzisu/pkudisk-fuse/internal/display"
 )
 
 type commandAuth struct {
@@ -126,26 +126,29 @@ are not requested. A search never changes remote files.`,
 			if err != nil {
 				return fmt.Errorf("search remote names: %w", err)
 			}
-			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-					Hits  int                    `json:"hits"`
-					Next  int                    `json:"next"`
-					Files []anyshare.SearchEntry `json:"files"`
-				}{result.Hits, result.Next, result.Files})
-			}
-			rows := make([][]string, 0, len(result.Files))
-			for _, file := range result.Files {
-				size := "-"
-				if file.Size >= 0 {
-					size = sizes.value(file.Size)
-				}
-				rows = append(rows, []string{file.Name, size, file.Path, file.ID})
-			}
-			if err := printTable(cmd.OutOrStdout(), []string{"NAME", "SIZE", "PATH", "ID"}, rows, 1); err != nil {
+			if err := display.RenderList(cmd.OutOrStdout(), result.Files, display.ListOptions[anyshare.SearchEntry]{
+				JSON: jsonOutput, Headers: []string{"NAME", "SIZE", "PATH", "ID"}, Numbers: []int{1},
+				JSONValue: func(files []anyshare.SearchEntry) any {
+					return struct {
+						Hits  int                    `json:"hits"`
+						Next  int                    `json:"next"`
+						Files []anyshare.SearchEntry `json:"files"`
+					}{result.Hits, result.Next, files}
+				},
+				Row: func(file anyshare.SearchEntry) []string {
+					size := "-"
+					if file.Size >= 0 {
+						size = sizes.value(file.Size)
+					}
+					return []string{file.Name, size, file.Path, file.ID}
+				},
+			}); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Matches: %d; returned: %d; next: %d\n", result.Hits, len(result.Files), result.Next)
-			return nil
+			if !jsonOutput {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Matches: %d; returned: %d; next: %d\n", result.Hits, len(result.Files), result.Next)
+			}
+			return err
 		},
 	}
 	auth.add(cmd)

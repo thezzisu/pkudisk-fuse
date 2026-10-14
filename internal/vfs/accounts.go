@@ -26,6 +26,7 @@ type MountAccount struct {
 }
 
 type AccountBackend struct {
+	selected string
 	accounts map[string]MountAccount
 	roots    []anyshare.Entry
 }
@@ -97,7 +98,11 @@ func parentID(id string) string {
 	if remote == "" {
 		return ""
 	}
-	return prefix + anyshare.ParentID(remote)
+	parent := anyshare.ParentID(remote)
+	if parent == "" {
+		return ""
+	}
+	return prefix + parent
 }
 
 func (b *AccountBackend) lookup(id string) (MountAccount, string, error) {
@@ -215,8 +220,9 @@ func (b *AccountBackend) Download(ctx context.Context, entry anyshare.Entry, des
 	if err != nil {
 		return err
 	}
+	id := entry.ID
 	entry.ID = remote
-	return account.Backend.Download(ctx, entry, dest)
+	return b.operationError(id, account.Backend.Download(ctx, entry, dest))
 }
 
 func (b *AccountBackend) Upload(ctx context.Context, parent, name string, existing *anyshare.Entry, data io.ReaderAt, size int64, mtime time.Time) (anyshare.Entry, error) {
@@ -253,6 +259,9 @@ func (b *AccountBackend) Delete(ctx context.Context, entry anyshare.Entry) error
 		return err
 	}
 	entry.ID = remote
+	if err := anyshare.ValidateDelete(entry); err != nil {
+		return err
+	}
 	return account.Backend.Delete(ctx, entry)
 }
 

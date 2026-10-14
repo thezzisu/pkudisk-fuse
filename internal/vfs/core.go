@@ -12,6 +12,7 @@ import (
 	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
 	"github.com/thezzisu/pkudisk-fuse/internal/diagnostic"
 	"github.com/thezzisu/pkudisk-fuse/internal/localfile"
+	"hash/fnv"
 	"io"
 	"log"
 	"os"
@@ -20,6 +21,37 @@ import (
 	"syscall"
 	"time"
 )
+
+// errorCode classifies core, remote and local errors once. Platform adapters
+// only translate the resulting errno to their driver's ABI.
+func errorCode(err error) syscall.Errno {
+	if err == nil {
+		return 0
+	}
+	switch {
+	case errors.Is(err, anyshare.ErrNotFound), errors.Is(err, os.ErrNotExist):
+		return syscall.ENOENT
+	case errors.Is(err, anyshare.ErrExists), errors.Is(err, os.ErrExist):
+		return syscall.EEXIST
+	case errors.Is(err, anyshare.ErrPermission), errors.Is(err, anyshare.ErrPending), errors.Is(err, os.ErrPermission):
+		return syscall.EACCES
+	case errors.Is(err, anyshare.ErrConflict):
+		return syscall.EBUSY
+	case errors.Is(err, anyshare.ErrQuota):
+		return syscall.ENOSPC
+	case errors.Is(err, anyshare.ErrSizeLimit):
+		return syscall.EFBIG
+	case errors.Is(err, context.Canceled):
+		return syscall.EINTR
+	case errors.Is(err, context.DeadlineExceeded):
+		return syscall.ETIMEDOUT
+	}
+	var code syscall.Errno
+	if errors.As(err, &code) {
+		return code
+	}
+	return syscall.EIO
+}
 
 type Backend interface {
 	Roots(context.Context) ([]anyshare.Entry, error)
@@ -516,4 +548,45 @@ func RandomName() string {
 		panic(err)
 	}
 	return ".pkudisk-fuse-move-" + hex.EncodeToString(b[:])
+}
+
+// errno maps protocol and context failures once; driver adapters only translate
+// the resulting platform errno into their ABI's representation.
+func errno(err error) syscall.Errno { return errorCode(err) }
+
+type nodeAttributes struct {
+	Inode             uint64
+	Mode, Links       uint32
+	Size, Blocks      int64
+	Modified, Created time.Time
+}
+
+func entryAttributes(entry anyshare.Entry, mode uint32) nodeAttributes {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(entry.ID))
+	attr := nodeAttributes{Inode: max(hash.Sum64(), 2), Mode: 0100000 | mode, Links: 1, Size: max(entry.Size, 0), Modified: entry.Modified, Created: entry.Created}
+	if entry.Dir {
+		attr.Mode, attr.Links, attr.Size = 0040000|mode, 2, 0
+	}
+	attr.Blocks = int64(quotaBlocks(attr.Size, 512))
+	if attr.Modified.IsZero() {
+		attr.Modified = time.Unix(0, 0)
+	}
+	if attr.Created.IsZero() {
+		attr.Created = attr.Modified
+	}
+	return attr
+}
+
+// Caller holds the node lock. Synthetic account directories are always read
+// only, with the same permissions on both filesystem drivers.
+func (n *Node) effectiveModeLocked() uint32 {
+	mode := n.mode
+	if n.synthetic {
+		mode = 0500
+	}
+	if n.f.opts.ReadOnly {
+		mode &^= 0222
+	}
+	return mode
 }

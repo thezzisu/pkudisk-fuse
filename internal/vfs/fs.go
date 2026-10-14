@@ -4,63 +4,21 @@ package vfs
 
 import (
 	"context"
-	"errors"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
 	"github.com/thezzisu/pkudisk-fuse/internal/diagnostic"
-	"hash/fnv"
 	"os"
 	"syscall"
-	"time"
 )
 
 type inodeBase = fs.Inode
 
 func stable(e anyshare.Entry) fs.StableAttr {
-	h := fnv.New64a()
-	h.Write([]byte(e.ID))
-	ino := h.Sum64()
-	if ino < 2 {
-		ino += 2
-	}
-	mode := uint32(syscall.S_IFREG)
-	if e.Dir {
-		mode = syscall.S_IFDIR
-	}
-	return fs.StableAttr{Ino: ino, Mode: mode}
+	attr := entryAttributes(e, 0)
+	return fs.StableAttr{Ino: attr.Inode, Mode: attr.Mode}
 }
 
-func errno(err error) syscall.Errno {
-	if err == nil {
-		return 0
-	}
-	switch {
-	case errors.Is(err, anyshare.ErrNotFound):
-		return syscall.ENOENT
-	case errors.Is(err, anyshare.ErrExists):
-		return syscall.EEXIST
-	case errors.Is(err, anyshare.ErrPermission):
-		return syscall.EACCES
-	case errors.Is(err, anyshare.ErrConflict):
-		return syscall.EBUSY
-	case errors.Is(err, anyshare.ErrQuota):
-		return syscall.ENOSPC
-	case errors.Is(err, anyshare.ErrSizeLimit):
-		return syscall.EFBIG
-	case errors.Is(err, anyshare.ErrPending):
-		return syscall.EACCES
-	case errors.Is(err, context.Canceled):
-		return syscall.EINTR
-	case errors.Is(err, context.DeadlineExceeded):
-		return syscall.ETIMEDOUT
-	}
-	var se syscall.Errno
-	if errors.As(err, &se) {
-		return se
-	}
-	return syscall.EIO
-}
 func (n *Node) failure(operation string, err error) syscall.Errno {
 	if err != nil {
 		n.f.opts.Logger.Printf("%s: %v", operation, err)
@@ -69,35 +27,11 @@ func (n *Node) failure(operation string, err error) syscall.Errno {
 }
 
 func (n *Node) fillLocked(a *fuse.Attr) {
-	a.Mode = n.mode | syscall.S_IFREG
-	if n.entry.Dir {
-		a.Mode = n.mode | syscall.S_IFDIR
-	}
-	if n.synthetic {
-		a.Mode = syscall.S_IFDIR | 0500
-	}
-	if n.f.opts.ReadOnly {
-		a.Mode &^= 0222
-	}
+	attr := entryAttributes(n.entry, n.effectiveModeLocked())
+	a.Mode, a.Nlink = attr.Mode, attr.Links
 	a.Uid, a.Gid = uint32(os.Getuid()), uint32(os.Getgid())
-	a.Nlink = 1
-	if n.entry.Dir {
-		a.Nlink = 2
-	}
-	if !n.entry.Dir && n.entry.Size >= 0 {
-		a.Size = uint64(n.entry.Size)
-	}
-	a.Blksize = 4096
-	a.Blocks = (a.Size + 511) / 512
-	mtime := n.entry.Modified
-	if mtime.IsZero() {
-		mtime = time.Unix(0, 0)
-	}
-	created := n.entry.Created
-	if created.IsZero() {
-		created = mtime
-	}
-	a.SetTimes(&mtime, &mtime, &created)
+	a.Size, a.Blksize, a.Blocks = uint64(attr.Size), 4096, uint64(attr.Blocks)
+	a.SetTimes(&attr.Modified, &attr.Modified, &attr.Modified)
 }
 
 func (n *Node) Getattr(ctx context.Context, h fs.FileHandle, out *fuse.AttrOut) (result syscall.Errno) {

@@ -2,17 +2,15 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/list"
-	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
+	"github.com/thezzisu/pkudisk-fuse/internal/display"
 )
 
 const shareHelp = `Internal links require login and honor existing permissions. Creating a link
@@ -321,124 +319,71 @@ func expiration(stamp *time.Time) string {
 }
 
 func printShareLinks(out io.Writer, links []anyshare.ShareLink, asJSON bool) error {
-	if asJSON {
-		return json.NewEncoder(out).Encode(links)
-	}
-	rows := [][]string{}
-	for _, link := range links {
-		if link.Type == "realname" {
-			fmt.Fprintln(out, link.URL)
-			continue
+	if !asJSON {
+		for _, link := range links {
+			if link.Type == "realname" {
+				if _, err := fmt.Fprintln(out, display.Text(link.URL)); err != nil {
+					return err
+				}
+			}
 		}
-		limit, code := "unlimited", link.Code
-		if link.LimitedTimes != -1 {
-			limit = fmt.Sprint(link.LimitedTimes)
-		}
-		if code == "" {
-			code = "-"
-		}
-		rows = append(rows, []string{link.ID, link.Title, strings.Join(link.Permissions, ","), expiration(link.ExpiresAt), limit, code, fmt.Sprint(link.VerifyMobile), link.URL})
 	}
-	if len(links) > 0 && len(rows) == 0 {
-		return nil
-	}
-	return printTable(out, []string{"ID", "TITLE", "ALLOW", "EXPIRES", "VISITS", "CODE", "PHONE", "URL"}, rows)
+	return display.RenderList(out, links, display.ListOptions[anyshare.ShareLink]{
+		JSON: asJSON, Headers: []string{"ID", "TITLE", "ALLOW", "EXPIRES", "VISITS", "CODE", "PHONE", "URL"},
+		Row: func(link anyshare.ShareLink) []string {
+			if link.Type == "realname" {
+				return nil
+			}
+			limit, code := "unlimited", link.Code
+			if link.LimitedTimes != -1 {
+				limit = fmt.Sprint(link.LimitedTimes)
+			}
+			if code == "" {
+				code = "-"
+			}
+			return []string{link.ID, link.Title, strings.Join(link.Permissions, ","), expiration(link.ExpiresAt), limit, code, fmt.Sprint(link.VerifyMobile), link.URL}
+		},
+	})
 }
 
 func printShareACL(out io.Writer, acl anyshare.ShareACL, links []anyshare.ShareLink, asJSON bool) error {
-	if asJSON {
-		return json.NewEncoder(out).Encode(struct {
-			anyshare.ShareACL
-			Links []anyshare.ShareLink `json:"links"`
-		}{acl, links})
-	}
-	rows := [][]string{}
-	for _, permission := range acl.Permissions {
-		from := permission.InheritedPath
-		if from == "" {
-			from = permission.InheritedFrom
-		}
-		if from == "" {
-			from = "direct"
-		}
-		rows = append(rows, []string{permission.Type, permission.Name, strings.Join(permission.Allow, ","), strings.Join(permission.Deny, ","), expiration(permission.ExpiresAt), from, permission.ID})
-	}
-	if err := printTable(out, []string{"TYPE", "NAME", "ALLOW", "DENY", "EXPIRES", "SOURCE", "ID"}, rows); err != nil {
+	if err := display.RenderList(out, acl.Permissions, display.ListOptions[anyshare.SharePermission]{
+		JSON: asJSON, Headers: []string{"TYPE", "NAME", "ALLOW", "DENY", "EXPIRES", "SOURCE", "ID"},
+		JSONValue: func(permissions []anyshare.SharePermission) any {
+			acl.Permissions = permissions
+			return struct {
+				anyshare.ShareACL
+				Links []anyshare.ShareLink `json:"links"`
+			}{acl, append([]anyshare.ShareLink{}, links...)}
+		},
+		Row: func(permission anyshare.SharePermission) []string {
+			from := permission.InheritedPath
+			if from == "" {
+				from = permission.InheritedFrom
+			}
+			if from == "" {
+				from = "direct"
+			}
+			return []string{permission.Type, permission.Name, strings.Join(permission.Allow, ","), strings.Join(permission.Deny, ","), expiration(permission.ExpiresAt), from, permission.ID}
+		},
+	}); err != nil {
 		return err
 	}
-	for _, link := range links {
-		fmt.Fprintln(out, "Internal link:", link.URL)
+	if !asJSON {
+		for _, link := range links {
+			if _, err := fmt.Fprintln(out, "Internal link:", display.Text(link.URL)); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
 func printRecipients(out io.Writer, recipients []anyshare.Recipient, asJSON bool) error {
-	if asJSON {
-		return json.NewEncoder(out).Encode(recipients)
-	}
-	rows := [][]string{}
-	for _, recipient := range recipients {
-		rows = append(rows, []string{recipient.Type, recipient.Name, recipient.Account, recipient.Path, recipient.ID})
-	}
-	return printTable(out, []string{"TYPE", "NAME", "ACCOUNT", "PATH", "ID"}, rows)
-}
-
-type recipientItem struct{ anyshare.Recipient }
-
-func (i recipientItem) Title() string { return tuiText(i.Name) }
-func (i recipientItem) Description() string {
-	return tuiText(i.Type + " " + i.Account + " " + i.Path + " (" + i.ID + ")")
-}
-func (i recipientItem) FilterValue() string { return i.Name + " " + i.Account + " " + i.ID }
-
-type recipientPicker struct {
-	list   list.Model
-	chosen *anyshare.Recipient
-}
-
-func (p *recipientPicker) Init() tea.Cmd { return nil }
-func (p *recipientPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if size, ok := msg.(tea.WindowSizeMsg); ok {
-		p.list.SetSize(max(20, size.Width-4), max(6, size.Height-4))
-	}
-	if key, ok := msg.(tea.KeyPressMsg); ok && !p.list.SettingFilter() {
-		switch key.String() {
-		case "enter":
-			if item, ok := p.list.SelectedItem().(recipientItem); ok {
-				p.chosen = &item.Recipient
-				return p, tea.Quit
-			}
-		case "esc", "q", "ctrl+c":
-			return p, tea.Quit
-		}
-	}
-	var cmd tea.Cmd
-	p.list, cmd = p.list.Update(msg)
-	return p, cmd
-}
-func (p *recipientPicker) View() tea.View { return tea.NewView(p.list.View()) }
-
-func pickRecipient(ctx context.Context, recipients []anyshare.Recipient) (anyshare.Recipient, error) {
-	if len(recipients) == 0 {
-		return anyshare.Recipient{}, errors.New("no matching recipients; find an explicit ID with 'share search NAME'")
-	}
-	input, output, err := openTerminal()
-	if err != nil {
-		return anyshare.Recipient{}, errors.New("interactive terminal unavailable; provide --user ID or --department ID")
-	}
-	defer closeTerminal(input, output)
-	items := make([]list.Item, len(recipients))
-	for i, recipient := range recipients {
-		items[i] = recipientItem{recipient}
-	}
-	picker := &recipientPicker{list: list.New(items, list.NewDefaultDelegate(), 80, 16)}
-	picker.list.Title = "Select sharing recipient (Enter selects, Esc cancels)"
-	_, err = tea.NewProgram(picker, tea.WithContext(ctx), tea.WithInput(input), tea.WithOutput(output)).Run()
-	if err != nil {
-		return anyshare.Recipient{}, err
-	}
-	if picker.chosen == nil {
-		return anyshare.Recipient{}, context.Canceled
-	}
-	return *picker.chosen, nil
+	return display.RenderList(out, recipients, display.ListOptions[anyshare.Recipient]{
+		JSON: asJSON, Headers: []string{"TYPE", "NAME", "ACCOUNT", "PATH", "ID"},
+		Row: func(recipient anyshare.Recipient) []string {
+			return []string{recipient.Type, recipient.Name, recipient.Account, recipient.Path, recipient.ID}
+		},
+	})
 }

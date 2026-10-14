@@ -5,9 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
-	"os"
 	"path"
 	"strings"
 	"sync"
@@ -72,31 +70,24 @@ func (w *WinFsp) operation(ctx context.Context) (context.Context, context.Cancel
 }
 
 func winError(err error) int {
-	if err == nil {
-		return 0
-	}
-	switch {
-	case errors.Is(err, anyshare.ErrNotFound), errors.Is(err, os.ErrNotExist):
-		return -fuse.ENOENT
-	case errors.Is(err, anyshare.ErrExists), errors.Is(err, os.ErrExist):
-		return -fuse.EEXIST
-	case errors.Is(err, anyshare.ErrPermission), errors.Is(err, anyshare.ErrPending), errors.Is(err, os.ErrPermission):
-		return -fuse.EACCES
-	case errors.Is(err, anyshare.ErrConflict):
-		return -fuse.EBUSY
-	case errors.Is(err, anyshare.ErrQuota), errors.Is(err, syscall.ENOSPC), errors.Is(err, windows.ERROR_DISK_FULL):
+	if errors.Is(err, windows.ERROR_DISK_FULL) {
 		return -fuse.ENOSPC
-	case errors.Is(err, anyshare.ErrSizeLimit), errors.Is(err, syscall.EFBIG):
-		return -fuse.EFBIG
-	case errors.Is(err, syscall.EXDEV):
-		return -fuse.EXDEV
-	case errors.Is(err, context.Canceled):
-		return -fuse.EINTR
-	case errors.Is(err, context.DeadlineExceeded):
-		return -fuse.ETIMEDOUT
-	default:
-		return -fuse.EIO
 	}
+	// Windows' syscall errno values do not share cgofuse's POSIX numbering.
+	codes := map[syscall.Errno]int{
+		0: 0, syscall.ENOENT: fuse.ENOENT, syscall.EEXIST: fuse.EEXIST,
+		syscall.EACCES: fuse.EACCES, syscall.EPERM: fuse.EPERM,
+		syscall.EBUSY: fuse.EBUSY, syscall.ENOSPC: fuse.ENOSPC,
+		syscall.EFBIG: fuse.EFBIG, syscall.EXDEV: fuse.EXDEV,
+		syscall.EINTR: fuse.EINTR, syscall.ETIMEDOUT: fuse.ETIMEDOUT,
+		syscall.EINVAL: fuse.EINVAL, syscall.ENOTDIR: fuse.ENOTDIR,
+		syscall.EISDIR: fuse.EISDIR, syscall.ENOTEMPTY: fuse.ENOTEMPTY,
+		syscall.EROFS: fuse.EROFS, syscall.EBADF: fuse.EBADF,
+	}
+	if code, ok := codes[errno(err)]; ok {
+		return -code
+	}
+	return -fuse.EIO
 }
 
 func (w *WinFsp) failure(operation string, err error) int {
@@ -234,31 +225,10 @@ func (w *WinFsp) node(ctx context.Context, value string, fh uint64) (*Node, erro
 }
 
 func winStat(entry anyshare.Entry, mode uint32) fuse.Stat_t {
-	hash := fnv.New64a()
-	hash.Write([]byte(entry.ID))
-	size := max(entry.Size, 0)
-	mtime := entry.Modified
-	if mtime.IsZero() {
-		mtime = time.Unix(0, 0)
-	}
-	created := entry.Created
-	if created.IsZero() {
-		created = mtime
-	}
-	typ, links := uint32(fuse.S_IFREG), uint32(1)
-	if entry.Dir {
-		typ, links = fuse.S_IFDIR, 2
-	}
-	return fuse.Stat_t{Ino: max(hash.Sum64(), 2), Mode: typ | mode, Nlink: links, Size: size,
-		Blksize: 4096, Blocks: (size / 512) + int64(boolInt(size%512 != 0)),
-		Atim: fuse.NewTimespec(mtime), Mtim: fuse.NewTimespec(mtime), Ctim: fuse.NewTimespec(mtime), Birthtim: fuse.NewTimespec(created)}
-}
-
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
+	attr := entryAttributes(entry, mode)
+	return fuse.Stat_t{Ino: attr.Inode, Mode: attr.Mode, Nlink: attr.Links, Size: attr.Size,
+		Blksize: 4096, Blocks: attr.Blocks, Atim: fuse.NewTimespec(attr.Modified),
+		Mtim: fuse.NewTimespec(attr.Modified), Ctim: fuse.NewTimespec(attr.Modified), Birthtim: fuse.NewTimespec(attr.Created)}
 }
 
 func (w *WinFsp) Getattr(value string, stat *fuse.Stat_t, fh uint64) (result int) {
@@ -279,11 +249,7 @@ func (w *WinFsp) Getattr(value string, stat *fuse.Stat_t, fh uint64) (result int
 	if fh == ^uint64(0) && value != "/" && node.entry.Name != path.Base(value) {
 		return -fuse.ENOENT
 	}
-	mode := node.mode
-	if w.core.opts.ReadOnly || node.synthetic {
-		mode &= 0555
-	}
-	*stat = winStat(node.entry, mode)
+	*stat = winStat(node.entry, node.effectiveModeLocked())
 	w.core.opts.Trace.Printf(ctx, "attributes returned: size=%s mode=%#o", w.core.opts.Trace.Size(stat.Size), stat.Mode)
 	return 0
 }

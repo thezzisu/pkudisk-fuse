@@ -93,7 +93,20 @@ func (s Service) Upload(ctx context.Context, local, remote string, overwrite boo
 	if !info.Mode().IsRegular() {
 		return result, errors.New("upload source must be a regular file")
 	}
-	parent, name, existing, err := s.uploadDestination(ctx, filepath.Base(local), remote)
+	result, err = s.UploadReader(ctx, filepath.Base(local), remote, file, info.Size(), info.ModTime(), overwrite, observe)
+	result.Local = local
+	return result, err
+}
+
+// UploadReader shares destination, conflict and fast-upload handling with file
+// uploads. HTTP multipart.File implements ReaderAt without loading large files
+// into memory or needing a browser's private filesystem path.
+func (s Service) UploadReader(ctx context.Context, name, remote string, data io.ReaderAt, size int64, modified time.Time, overwrite bool, observe Observer) (Result, error) {
+	result := Result{Remote: remote}
+	if !anyshare.ValidName(name) || size < 0 || data == nil {
+		return result, errors.New("invalid upload file")
+	}
+	parent, name, existing, err := s.uploadDestination(ctx, name, remote)
 	if err != nil {
 		return result, err
 	}
@@ -105,12 +118,12 @@ func (s Service) Upload(ctx context.Context, local, remote string, overwrite boo
 			return result, fmt.Errorf("%w: %q; use --overwrite to replace it", anyshare.ErrExists, name)
 		}
 	}
-	progress := newReporter(info.Size(), observe)
-	entry, fast, err := s.uploadFile(ctx, parent, name, existing, file, info.Size(), info.ModTime(), progress)
+	progress := newReporter(size, observe)
+	entry, fast, err := s.uploadFile(ctx, parent, name, existing, data, size, modified, progress)
 	if err != nil {
 		return result, err
 	}
-	result.Entry, result.Bytes, result.Files = entry, info.Size(), 1
+	result.Entry, result.Bytes, result.Files = entry, size, 1
 	if fast {
 		result.FastFiles = 1
 	}

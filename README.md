@@ -2,6 +2,17 @@
 
 `pkudisk-fuse` browses, uploads, downloads and mounts PKU NetDisk (AnyShare) on Linux, macOS and Windows. Linux/macOS mounts use FUSE; Windows mounts use WinFsp. The CLI and TUI work without a filesystem driver. It is written in Go and uses the same HTTPS API and object-storage flow as the official AnyShare 7.0.6 client. See [platform support](docs/platform-support.md) for driver requirements, paths and validation.
 
+`pkudisk-fuse gui` opens a system tray and a Chinese/English browser interface in the same binary. Manage accounts, browse/search files, upload/download, mount drives, share files, manage public links, use the recycle bin and file history, and inspect retained writes. Only mounting needs a filesystem driver. See [desktop GUI](docs/gui.md) for launchers, browser file transfers and the security model.
+
+On Linux and macOS, `gui` detaches by default and prints `pkudisk-fuse gui stop` as the shutdown command; use `gui --foreground` for a terminal-attached session.
+
+An optional [Android app](mobile/android/README.md) hosts the same GUI in an in-app
+WebView using a shared gomobile library. Mobile dependencies and build tools are
+isolated under `mobile/`; CLI builds need no Android or gomobile tooling.
+The root `go.work` connects both modules for development. Session authentication,
+mount orchestration, AnyShare operations and transfers live in shared internal
+packages; see [architecture](docs/architecture.md).
+
 The login uses **PKU unified authentication (IAAA)**. The password is RSA encrypted with the public key served by the login page. Saved accounts are stored in a private file below the user configuration directory (0600 on Unix; a restricted ACL on Windows); the password and renewable AnyShare session are used to resume a login without prompting. NetDisk local accounts are intentionally not supported.
 
 ## Install
@@ -14,7 +25,7 @@ With Go 1.26.9 or newer, install the command with:
 go install github.com/thezzisu/pkudisk-fuse/cmd/pkudisk-fuse@latest
 ```
 
-Use a version such as `@v0.4.2` instead of `@latest` to select a release. Add `GOBIN` (normally `~/go/bin`, or `%USERPROFILE%\go\bin` on Windows) to your `PATH` if needed.
+Use a version such as `@v0.5.0` instead of `@latest` to select a release. Add `GOBIN` (normally `~/go/bin`, or `%USERPROFILE%\go\bin` on Windows) to your `PATH` if needed.
 
 ```sh
 pkudisk-fuse version
@@ -35,7 +46,24 @@ make test
 make check
 ```
 
-The binary is `bin/pkudisk-fuse`. No part of the repository contains an account, password, token, cookie, or private key.
+The Nuxt GUI is checked in as static embedded assets, so Go builds and
+`go install` do not require Node. After changing the frontend in `web/`, run
+`make ui` with Node 24, then `make build`. `make ui-check` checks frontend types,
+lint and the embedded asset fingerprint. See [frontend development](web/README.md).
+
+The binary is `bin/pkudisk-fuse`. No real account credentials or private keys are
+checked in; automated tests use explicit local fixtures.
+
+The workspace contains two modules, so run Go tests in each:
+
+```sh
+go test -race ./...
+(cd mobile && go test -race ./...)
+```
+
+`GOWORK=off go build -o bin/pkudisk-fuse ./cmd/pkudisk-fuse` checks the standalone CLI module.
+Installing a published CLI version also resolves only the root module; Android
+and gomobile tools remain declared in `mobile/go.mod`.
 
 Without Make, build directly with `go build -trimpath -o pkudisk-fuse ./cmd/pkudisk-fuse`; on Windows use `-o pkudisk-fuse.exe`. Cross-builds for Linux/macOS/Windows amd64 and arm64 support `CGO_ENABLED=0`. Native Windows mounts require WinFsp to be installed separately.
 

@@ -48,5 +48,8 @@ func (c *Client) RestoreRevision(ctx context.Context, entry Entry, rev string) e
 	if entry.ID == "" || entry.Dir || rev == "" {
 		return errors.New("file and revision are required")
 	}
+	if _, err := c.Revision(ctx, entry, rev); err != nil {
+		return err
+	}
 	return c.post(ctx, "/efast/v1/file/restorerevision", map[string]string{"docid": entry.ID, "rev": rev}, nil)
 }

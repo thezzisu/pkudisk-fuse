@@ -8,16 +8,17 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/pflag"
 	"github.com/thezzisu/pkudisk-fuse/internal/accounts"
 	"github.com/thezzisu/pkudisk-fuse/internal/auth"
 	"github.com/thezzisu/pkudisk-fuse/internal/diagnostic"
 	"github.com/thezzisu/pkudisk-fuse/internal/localfile"
+	"github.com/thezzisu/pkudisk-fuse/internal/session"
 )
 
 type authFlags struct {
+	challenge                                                auth.ChallengeFunc
 	trace                                                    *diagnostic.Logger
 	server, account, username, passwordFile, credentialsFile string
 	stdin, noSave                                            bool
@@ -159,167 +160,57 @@ func authenticate(ctx context.Context, opts authFlags) (*auth.Session, string, s
 }
 
 func authenticateWith(ctx context.Context, opts authFlags, newSession func(auth.Options) (*auth.Session, error)) (*auth.Session, string, string, error) {
+	if err := opts.validate(); err != nil {
+		return nil, "", "", err
+	}
 	if opts.input == nil {
 		opts.input = os.Stdin
 	}
 	if opts.output == nil {
 		opts.output = os.Stderr
 	}
-	explicit := opts.username != "" || opts.passwordFile != "" || opts.credentialsFile != "" || opts.stdin
-	if err := opts.validate(); err != nil {
-		return nil, "", "", err
-	}
 	var store *accounts.Store
-	var config accounts.Config
 	if !opts.noSave {
 		var err error
 		store, err = accounts.Default()
 		if err != nil {
 			return nil, "", "", err
 		}
-		config, err = store.Load()
-		if err != nil {
-			return nil, "", "", fmt.Errorf("load saved accounts: %w", err)
-		}
 	}
-	var saved *accounts.Account
-	if !explicit && !opts.forceLogin && !opts.noSave {
-		name := opts.account
-		if name == "" {
-			name = config.Default
-		}
-		if name != "" {
-			a, ok := config.Find(name)
-			if !ok {
-				return nil, "", "", fmt.Errorf("%w: %s", accounts.ErrNotFound, name)
+	input := session.Input{
+		Account: opts.account, Name: opts.saveName, Server: opts.server,
+		Explicit:   opts.username != "" || opts.passwordFile != "" || opts.credentialsFile != "" || opts.stdin,
+		ForceLogin: opts.forceLogin, Replace: opts.replace, Default: opts.makeDefault, Trace: opts.trace,
+		Credentials: func(ctx context.Context) (auth.Credentials, error) { return readCredentials(ctx, opts) },
+		Challenge: func(ctx context.Context, challenge auth.Challenge) (string, error) {
+			if opts.challenge != nil {
+				return opts.challenge(ctx, challenge)
 			}
-			if opts.server != "" && strings.TrimRight(opts.server, "/") != strings.TrimRight(a.Server, "/") {
-				return nil, "", "", errors.New("--server differs from the saved account's server; provide explicit credentials for another server")
+			if opts.nonInteractive {
+				return "", fmt.Errorf("%s required; rerun interactively or supply available OTP/SMS codes with --credentials-file", challenge.Kind)
 			}
-			saved, opts.server = &a, a.Server
-		}
-	}
-	if opts.server == "" {
-		opts.server = auth.DefaultServer
-	}
-	opts.server = strings.TrimRight(opts.server, "/")
-	var c auth.Credentials
-	var err error
-	if saved != nil {
-		c = auth.Credentials{Username: saved.Username, Password: []byte(saved.Password)}
-	} else {
-		c, err = readCredentials(ctx, opts)
-		if err != nil {
-			return nil, "", "", err
-		}
-	}
-	defer clear(c.Password)
-	if c.Username == "" || len(c.Password) == 0 || len(c.Password) > 8192 {
-		return nil, "", "", errors.New("username and a password of at most 8192 bytes are required")
-	}
-	options := auth.Options{Server: opts.server, Trace: opts.trace, Challenge: func(ctx context.Context, challenge auth.Challenge) (string, error) {
-		if opts.nonInteractive {
-			return "", fmt.Errorf("%s required; rerun interactively or supply available OTP/SMS codes with --credentials-file", challenge.Kind)
-		}
-		return verificationInput(ctx, challenge, opts.output)
-	}}
-	// Any explicit login without a selected saved account creates or updates a
-	// persistent account. With no existing default, the first login becomes it.
-	saveNew := !opts.noSave && saved == nil
-	name := opts.saveName
-	if name == "" {
-		name = c.Username
-	}
-	accountLabel := name
-	if saved != nil {
-		accountLabel = saved.Name
-	}
-	if !opts.noSave {
-		persistedName, persistedServer, persistedUsername := name, opts.server, c.Username
-		if saved != nil {
-			persistedName, persistedServer, persistedUsername = saved.Name, saved.Server, saved.Username
-		}
-		options.RefreshLock = store.LockSession
-		options.LoadState = func() (auth.State, error) {
-			latest, err := store.Load()
-			if err != nil {
-				return auth.State{}, err
-			}
-			account, ok := latest.Find(persistedName)
-			if !ok || account.Username != persistedUsername || strings.TrimRight(account.Server, "/") != strings.TrimRight(persistedServer, "/") {
-				return auth.State{}, fmt.Errorf("saved account %q changed while the session was refreshing", persistedName)
-			}
-			return account.Session, nil
-		}
-	}
-	if saveNew {
-		if !accounts.ValidName(name) {
-			return nil, "", "", errors.New("invalid account name")
-		}
-		replaceAccount := opts.replace
-		if existing, exists := config.Find(name); exists {
-			if existing.Server != opts.server {
-				return nil, "", "", fmt.Errorf("account %q already belongs to %s; choose another account name", name, existing.Server)
-			}
-			// Explicit credentials on a normal command are a deliberate
-			// re-login, so refresh the matching saved account. `account add`
-			// remains conservative and requires --replace.
-			if opts.forceLogin && !opts.replace {
-				return nil, "", "", accounts.ErrExists
-			}
-			replaceAccount = true
-		}
-		record := accounts.Account{Name: name, Username: c.Username, Password: string(c.Password), Server: opts.server}
-		created := false
-		options.OnState = func(state auth.State) error {
-			if created {
-				return store.UpdateState(name, record.Server, record.Username, state)
-			}
-			record.Session = state
-			makeDefault := opts.makeDefault || config.Default == ""
-			if err := store.Put(record, makeDefault, replaceAccount); err != nil {
-				return err
-			}
-			created = true
-			record.Password = ""
-			return nil
-		}
-	} else if saved != nil {
-		name, server, username := saved.Name, saved.Server, saved.Username
-		options.OnState = func(state auth.State) error { return store.UpdateState(name, server, username, state) }
+			return verificationInput(ctx, challenge, opts.output)
+		},
 	}
 	if opts.announce {
-		if accountLabel == c.Username {
-			fmt.Fprintf(opts.output, "Using account %q (%s)\n", accountLabel, opts.server)
-		} else {
-			fmt.Fprintf(opts.output, "Using account %q (username %q, %s)\n", accountLabel, c.Username, opts.server)
+		input.Selected = func(account session.Identity) {
+			if account.Name == account.Username {
+				fmt.Fprintf(opts.output, "Using account %q (%s)\n", account.Name, account.Server)
+			} else {
+				fmt.Fprintf(opts.output, "Using account %q (username %q, %s)\n", account.Name, account.Username, account.Server)
+			}
 		}
 	}
-	s, err := newSession(options)
+	connected, err := (session.Connector{Store: store, NewSession: newSession}).Connect(ctx, input)
 	if err != nil {
 		return nil, "", "", err
 	}
-	if saved != nil && saved.Session.RefreshToken != "" {
-		err = s.Restore(ctx, saved.Session)
-		if err == nil {
-			return s, opts.server, accountLabel, nil
-		}
-		if !errors.Is(err, auth.ErrSessionExpired) {
-			s.Close()
-			return nil, "", "", fmt.Errorf("restore account %q: %w", saved.Name, err)
-		}
-		s.Close()
-	}
-	if err = s.Login(ctx, c); err != nil {
-		s.Close()
-		return nil, "", "", err
-	}
-	if saveNew {
+	if connected.Saved {
 		suffix := ""
-		if opts.makeDefault || config.Default == "" {
+		if connected.Default {
 			suffix = " (default)"
 		}
-		fmt.Fprintf(opts.output, "Saved account %q%s.\n", name, suffix)
+		fmt.Fprintf(opts.output, "Saved account %q%s.\n", connected.Name, suffix)
 	}
-	return s, opts.server, accountLabel, nil
+	return connected.Session, connected.Server, connected.Name, nil
 }

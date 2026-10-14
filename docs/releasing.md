@@ -13,6 +13,9 @@ interface change; do not bump it for each improvement to the existing mount.
 
 1. Add `docs/releases/vX.Y.Z.md` with changes, installation instructions and
    material limitations. Run `make test` and `make check` locally.
+   For frontend changes, run `make ui` and `make ui-check`, and include the
+   regenerated `internal/gui/web/` assets. Plain Go release builds use these
+   embedded assets; Node is needed only for frontend development/validation.
 2. With GoReleaser v2.18.3 installed, optionally rehearse packaging using
    `goreleaser release --snapshot --clean`. This builds all six archives locally
    without publishing. Check the native binary's `version` output.
@@ -36,6 +39,24 @@ Go 1.26 patch release, `CGO_ENABLED=0` and `-trimpath`. The job checks the nativ
 binary's version, publishes the archives and checksums with `gh release create`,
 and requests the tagged module from Go's official proxy. Rerun a failed workflow
 before publication; it does not replace an existing release or its assets.
+
+Desktop packaging sets `GOWORK=off` so the standalone root dependency graph is
+also used by the release binaries. Mobile tooling remains in its own module.
+
+## Android attachment
+
+Update `versionName` and increment `versionCode` in `mobile/android/app/build.gradle`.
+Use the shared toolchain described in `mobile/android/README.md`; run the debug
+APK's full emulator E2E and build/lint the release variant with signing supplied
+through the `PKUDISK_ANDROID_*` environment variables. Never commit signing keys
+or passwords. Keep the signing certificate stable for in-place upgrades.
+
+Before attaching the release APK, verify its package/version, both ABIs,
+non-debuggable manifest, signature and 16 KiB zip alignment. Install the release
+over the test build on a disposable emulator and check a cold launch. Generate
+the companion dependency license bundle with `mobile/scripts/licenses.sh` and
+attach both artifacts plus `android-checksums.txt` to the published release.
+The desktop workflow does not require an Android toolchain or signing secrets.
 
 Archives include LICENSE, NOTICE, README, platform and transfer documentation,
 shell completions and dependency license files. `scripts/release-files.sh`

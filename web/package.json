@@ -1,0 +1,52 @@
+{
+  "name": "pkudisk-gui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt generate && node scripts/embed.mjs",
+    "dev": "nuxt dev --host 127.0.0.1",
+    "preview": "nuxt preview",
+    "postinstall": "patch-package && nuxt prepare",
+    "lint": "eslint .",
+    "typecheck": "nuxt typecheck",
+    "format": "prettier --write app i18n nuxt.config.ts"
+  },
+  "dependencies": {
+    "@iconify-json/lucide": "^1.2.142",
+    "@nuxt/ui": "4.11.3",
+    "@nuxtjs/i18n": "10.6.0",
+    "@pinia/nuxt": "1.0.2",
+    "@tanstack/vue-table": "8.21.3",
+    "@uppy/core": "6.2.0",
+    "@uppy/xhr-upload": "6.0.1",
+    "@vueuse/nuxt": "15.0.0",
+    "browser-fs-access": "0.38.0",
+    "nuxt": "4.6.1",
+    "pinia": "4.0.3",
+    "pretty-bytes": "7.2.0",
+    "rollup-plugin-license": "3.7.1",
+    "tailwindcss": "^4.3.3",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "^1.17.0",
+    "@types/node": "24.19.2",
+    "@types/wicg-file-system-access": "2023.10.7",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-better-tailwindcss": "^4.9.0",
+    "patch-package": "8.0.1",
+    "playwright": "1.64.0",
+    "prettier": "3.9.10",
+    "typescript": "^6.0.3",
+    "vue-tsc": "^3.3.13"
+  },
+  "engines": {
+    "node": "^22.22.3 || ^24.15.0 || >=26.0.0"
+  },
+  "overrides": {
+    "simple-git": "4.0.2",
+    "@simple-git/argv-parser": "2.0.1",
+    "esbuild": "0.28.2"
+  }
+}

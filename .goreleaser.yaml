@@ -11,6 +11,7 @@ builds:
     binary: pkudisk-fuse
     env:
       - CGO_ENABLED=0
+      - GOWORK=off
     goos:
       - linux
       - darwin
@@ -35,6 +36,11 @@ archives:
       - README.md
       - docs/platform-support.md
       - docs/transfer-limits.md
+      - docs/gui.md
+      - desktop/*
+      - internal/gui/web/THIRD_PARTY_LICENSES.txt
+      - internal/gui/web/NUXT_UI_STARTER_LICENSE.txt
+      - internal/gui/web/LUCIDE_LICENSE.txt
       - completions/*
       - licenses/Go-LICENSE
       - licenses/**/*

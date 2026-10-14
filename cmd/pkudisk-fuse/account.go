@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/thezzisu/pkudisk-fuse/internal/accounts"
+	"github.com/thezzisu/pkudisk-fuse/internal/display"
 	"github.com/thezzisu/pkudisk-fuse/internal/localfile"
 )
 
@@ -135,22 +135,15 @@ func lsAccounts(output io.Writer, jsonOutput bool) error {
 		rows = append(rows, summary{a.Name, a.Username, a.Server, a.Name == cfg.Default})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
-	if jsonOutput {
-		encoder := json.NewEncoder(output)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(rows)
-	}
-	if len(rows) == 0 {
-		fmt.Fprintln(output, "No saved accounts. Run 'pkudisk-fuse account add' to log in and save the first account.")
-		return nil
-	}
-	tableRows := make([][]string, 0, len(rows))
-	for _, row := range rows {
-		marker := ""
-		if row.Default {
-			marker = "*"
-		}
-		tableRows = append(tableRows, []string{marker, row.Name, row.Username, row.Server})
-	}
-	return printTable(output, []string{"DEFAULT", "NAME", "USERNAME", "SERVER"}, tableRows)
+	return display.RenderList(output, rows, display.ListOptions[summary]{
+		JSON: jsonOutput, Indent: "  ", Headers: []string{"DEFAULT", "NAME", "USERNAME", "SERVER"},
+		EmptyMessage: "No saved accounts. Run 'pkudisk-fuse account add' to log in and save the first account.",
+		Row: func(row summary) []string {
+			marker := ""
+			if row.Default {
+				marker = "*"
+			}
+			return []string{marker, row.Name, row.Username, row.Server}
+		},
+	})
 }

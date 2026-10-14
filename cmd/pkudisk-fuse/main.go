@@ -8,15 +8,17 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
+	"github.com/thezzisu/pkudisk-fuse/internal/desktop"
 	"github.com/thezzisu/pkudisk-fuse/internal/diagnostic"
+	"github.com/thezzisu/pkudisk-fuse/internal/display"
 	"github.com/thezzisu/pkudisk-fuse/internal/localfile"
+	mountcore "github.com/thezzisu/pkudisk-fuse/internal/mount"
 	"github.com/thezzisu/pkudisk-fuse/internal/vfs"
 )
 
@@ -44,9 +46,17 @@ func exitCode(err error) int {
 }
 
 func main() {
+	desktopLaunch := desktop.StartedFromDesktop()
+	args := launchArgs(os.Args[1:], desktopLaunch)
+	// Our launch resolver replaces Cobra's Windows Explorer splash screen.
+	cobra.MousetrapHelpText = ""
+	guiLaunch := desktopLaunch && len(args) == 1 && args[0] == "gui"
+	if guiLaunch {
+		desktop.DetachConsole()
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := execute(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+	if err := execute(ctx, args, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "pkudisk-fuse:", err)
 		os.Exit(exitCode(err))
 	}
@@ -103,7 +113,8 @@ func newRootCommand(in io.Reader, out, errOut io.Writer) *cobra.Command {
 
 Start with "account add" to save a PKU campus login, then "ls" to list
 accessible document libraries. "ls PATH" lists remote folders; "tui" opens a file
-browser. "search" finds remote filenames; "copy" duplicates remote files or
+browser. "gui" opens the bilingual desktop tray and browser interface.
+"search" finds remote filenames; "copy" duplicates remote files or
 folders. "share" manages internal access, "link" manages anonymous links, and
 "quota" reports capacity. "recover" inspects writes retained after a mount.
 "delete" moves files to the recycle bin; "recycle" restores or permanently
@@ -151,7 +162,7 @@ starts with a dash. Exit codes: 0 success, 1 execution failure, 2 usage error.`,
 		}
 		root.AddCommand(commands...)
 	}
-	add("browse", newRemoteCommand("ls"), newSearchCommand(), newRemoteCommand("tui"))
+	add("browse", newRemoteCommand("ls"), newSearchCommand(), newRemoteCommand("tui"), newGUICommand())
 	add("files", newRemoteCommand("upload"), newRemoteCommand("download"), newCopyCommand(), newRemoteCommand("extract"), newDeleteCommand(), newRecycleCommand(), newRevisionCommand())
 	add("sharing", newShareCommand(), newLinkCommand())
 	add("local", newRemoteCommand("mount"), newRecoverCommand())
@@ -169,7 +180,7 @@ func newRemoteCommand(name string) *cobra.Command {
 	var allAccounts bool
 	var sizes sizeFormat
 	timeout := 10 * time.Minute
-	var mount mountOptions
+	mount := mountcore.DefaultOptions()
 	cmd := &cobra.Command{Use: name, Args: cobra.NoArgs}
 	switch name {
 	case "ls":
@@ -288,7 +299,7 @@ inside route to that account. Cross-account moves return EXDEV; copy instead.
 Capacity counts shared libraries on the same server once, with available
 space only where at least one account has write permission.
 
-` + mountPlatformHelp + `
+` + mountcore.PlatformHelp + `
 
 Files up to --read-whole-file are fetched whole on first read. Larger files
 start with --read-block-size ranges; sequential reads grow the fetch up to
@@ -314,23 +325,22 @@ but omit credentials, request bodies and signed URL paths/queries.
 --debug additionally prints raw filesystem-driver diagnostics.
 
 ` + remoteHelp
-		cmd.Example = mountPlatformExample + "\n  pkudisk-fuse mount " + mountPlatformPoint + " --all-accounts" + "\n  pkudisk-fuse mount " + mountPlatformPoint + " --read-whole-file 32MiB --read-ahead 64MiB\n  pkudisk-fuse mount " + mountPlatformPoint + " --read-whole-file 0 --read-block-size 1MiB --read-ahead 0" + "\n  pkudisk-fuse mount " + mountPlatformPoint + " --verbose 2> mount.log"
+		cmd.Example = mountcore.PlatformExample + "\n  pkudisk-fuse mount " + mountcore.PlatformPoint + " --all-accounts" + "\n  pkudisk-fuse mount " + mountcore.PlatformPoint + " --read-whole-file 32MiB --read-ahead 64MiB\n  pkudisk-fuse mount " + mountcore.PlatformPoint + " --read-whole-file 0 --read-block-size 1MiB --read-ahead 0" + "\n  pkudisk-fuse mount " + mountcore.PlatformPoint + " --verbose 2> mount.log"
 		f := cmd.Flags()
 		f.BoolVar(&allAccounts, "all-accounts", false, "mount every saved account in its own top-level directory; requires all accounts to be usable")
-		f.StringVar(&mount.root, "root", "", "remote library/folder path or gns:// ID to mount")
-		f.StringVar(&mount.cache, "cache-dir", defaultCache(), "private cache parent directory (0700); recover scans it")
-		mount.cacheLimit, mount.partSize, mount.read = 10<<30, 16<<20, vfs.DefaultReadOptions()
-		f.Var(byteSize{&mount.cacheLimit}, "cache-limit", "shared read/write disk cache budget; clean data is evicted first; 0 disables the limit")
-		f.Var(byteSize{&mount.partSize}, "part-size", "preferred upload chunk size, at least 5MiB; adjusted to server limits")
-		f.Var(byteSize{&mount.read.BlockSize}, "read-block-size", "initial/random read range size (up to 512MiB)")
-		f.Var(byteSize{&mount.read.WholeFile}, "read-whole-file", "fetch files up to this size whole; 0 disables; maximum 512MiB")
-		f.Var(byteSize{&mount.read.ReadAhead}, "read-ahead", "maximum batched fetch for sequential reads; 0 disables growth; maximum 512MiB")
-		f.IntVar(&mount.read.Concurrency, "read-concurrency", mount.read.Concurrency, "maximum simultaneous remote read fetches (1-64)")
-		f.DurationVar(&mount.ttl, "cache-ttl", 2*time.Second, "directory and attribute cache lifetime")
-		f.DurationVar(&mount.refreshInterval, "refresh-interval", time.Hour, "renew idle sessions at this interval; 0 disables scheduled renewal")
-		f.BoolVar(&mount.readOnly, "read-only", false, "prevent remote file changes")
-		f.BoolVar(&mount.debug, "debug", false, "print FUSE protocol diagnostics to stderr")
-		f.BoolVarP(&mount.verbose, "verbose", "v", false, "explain mount operations, cache/fetch decisions and HTTP timing on stderr; credentials and signed URLs are omitted")
+		f.StringVar(&mount.Root, "root", "", "remote library/folder path or gns:// ID to mount")
+		f.StringVar(&mount.Cache, "cache-dir", defaultCache(), "private cache parent directory (0700); recover scans it")
+		f.Var(mountcore.ByteSize{Value: &mount.CacheLimit}, "cache-limit", "shared read/write disk cache budget; clean data is evicted first; 0 disables the limit")
+		f.Var(mountcore.ByteSize{Value: &mount.PartSize}, "part-size", "preferred upload chunk size, at least 5MiB; adjusted to server limits")
+		f.Var(mountcore.ByteSize{Value: &mount.Read.BlockSize}, "read-block-size", "initial/random read range size (up to 512MiB)")
+		f.Var(mountcore.ByteSize{Value: &mount.Read.WholeFile}, "read-whole-file", "fetch files up to this size whole; 0 disables; maximum 512MiB")
+		f.Var(mountcore.ByteSize{Value: &mount.Read.ReadAhead}, "read-ahead", "maximum batched fetch for sequential reads; 0 disables growth; maximum 512MiB")
+		f.IntVar(&mount.Read.Concurrency, "read-concurrency", mount.Read.Concurrency, "maximum simultaneous remote read fetches (1-64)")
+		f.DurationVar(&mount.TTL, "cache-ttl", mount.TTL, "directory and attribute cache lifetime")
+		f.DurationVar(&mount.RefreshInterval, "refresh-interval", mount.RefreshInterval, "renew idle sessions at this interval; 0 disables scheduled renewal")
+		f.BoolVar(&mount.ReadOnly, "read-only", false, "prevent remote file changes")
+		f.BoolVar(&mount.Debug, "debug", false, "print FUSE protocol diagnostics to stderr")
+		f.BoolVarP(&mount.Verbose, "verbose", "v", false, "explain mount operations, cache/fetch decisions and HTTP timing on stderr; credentials and signed URLs are omitted")
 	}
 	credentials.add(cmd.Flags())
 	if name == "ls" || name == "upload" || name == "download" || name == "mount" || name == "tui" {
@@ -356,9 +366,7 @@ but omit credentials, request bodies and signed URL paths/queries.
 		if archive && viaArchive {
 			return usageFailure(cmd, "choose --archive or --via-archive")
 		}
-		if name == "mount" && (mount.cacheLimit < 0 || mount.partSize < 5<<20 || mount.ttl < 0 || mount.refreshInterval < 0) {
-			return usageFailure(cmd, "cache limits and intervals must be nonnegative; --part-size must be at least 5242880 bytes")
-		}
+
 		if allAccounts {
 			for _, flag := range []string{"account", "root", "server", "username", "password-file", "credentials-file", "password-stdin", "no-save"} {
 				if cmd.Flags().Changed(flag) {
@@ -367,7 +375,8 @@ but omit credentials, request bodies and signed URL paths/queries.
 			}
 		}
 		if name == "mount" {
-			if err := mount.read.Validate(); err != nil {
+			mount.Timeout = timeout
+			if err := mount.Validate(); err != nil {
 				return usageFailure(cmd, err.Error())
 			}
 		}
@@ -375,34 +384,34 @@ but omit credentials, request bodies and signed URL paths/queries.
 			return errors.New("tui requires an interactive terminal; use ls, upload, or download for non-interactive operations")
 		}
 		if name == "mount" {
-			if err := checkMountSupport(); err != nil {
+			if err := mountcore.CheckSupport(); err != nil {
 				return err
 			}
 		}
 		credentials.input, credentials.output = cmd.InOrStdin(), cmd.ErrOrStderr()
-		if name == "mount" && mount.verbose {
-			mount.trace = diagnostic.New(cmd.ErrOrStderr())
-			mount.trace.SetBytes(sizes.bytes)
-			credentials.trace = mount.trace
-			mount.trace.Printf(cmd.Context(), "mount diagnostics enabled; version=%s OS=%s architecture=%s", installedVersion(), runtime.GOOS, runtime.GOARCH)
+		if name == "mount" && mount.Verbose {
+			mount.Trace = diagnostic.New(cmd.ErrOrStderr())
+			mount.Trace.SetBytes(sizes.bytes)
+			credentials.trace = mount.Trace
+			mount.Trace.Printf(cmd.Context(), "mount diagnostics enabled; version=%s OS=%s architecture=%s", installedVersion(), runtime.GOOS, runtime.GOARCH)
 		}
 		credentials.announce = name != "tui"
 		if name == "mount" {
-			mount.mountpoint, mount.timeout = args[0], timeout
-			source, err := prepareAccounts(cmd.Context(), credentials, accountOptions{allAccounts: allAccounts, root: mount.root, partSize: mount.partSize, timeout: timeout, trace: mount.trace})
+			mount.Point, mount.Timeout = args[0], timeout
+			source, err := prepareAccounts(cmd.Context(), credentials, mountcore.SourceOptions{AllAccounts: allAccounts, Root: mount.Root, PartSize: mount.PartSize, Timeout: timeout, Trace: mount.Trace})
 			if err != nil {
 				return err
 			}
 			defer source.Close()
-			return mountFileSystem(cmd.Context(), source, mount, cmd.ErrOrStderr())
+			return mountcore.Run(cmd.Context(), source, mount, cmd.ErrOrStderr())
 		}
 		if name == "tui" && allAccounts {
-			source, err := prepareAccounts(cmd.Context(), credentials, accountOptions{allAccounts: true, timeout: timeout})
+			source, err := prepareAccounts(cmd.Context(), credentials, mountcore.SourceOptions{AllAccounts: true, Timeout: timeout})
 			if err != nil {
 				return err
 			}
 			defer source.Close()
-			return runTUI(cmd.Context(), source.backend, "All accounts", fmt.Sprintf("%d saved accounts", len(source.sessions)), timeout, sizes, cmd.InOrStdin(), cmd.OutOrStdout())
+			return runTUI(cmd.Context(), source.Backend, "All accounts", fmt.Sprintf("%d saved accounts", source.AccountCount()), timeout, sizes, cmd.InOrStdin(), cmd.OutOrStdout())
 		}
 		session, server, account, err := authenticate(cmd.Context(), credentials)
 		if err != nil {
@@ -413,7 +422,7 @@ but omit credentials, request bodies and signed URL paths/queries.
 		if err != nil {
 			return err
 		}
-		client.SetTrace(mount.trace)
+		client.SetTrace(mount.Trace)
 		switch name {
 		case "ls":
 			selector := "/"
@@ -444,13 +453,7 @@ but omit credentials, request bodies and signed URL paths/queries.
 	return cmd
 }
 
-func defaultCache() string {
-	dir, err := localfile.CacheDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "pkudisk-fuse")
-}
+func defaultCache() string { return mountcore.DefaultCache() }
 func listRemote(ctx context.Context, client *anyshare.Client, selector string) ([]anyshare.Entry, error) {
 	if selector == "/" || selector == "" {
 		return client.Roots(ctx)
@@ -465,31 +468,24 @@ func listRemote(ctx context.Context, client *anyshare.Client, selector string) (
 	return client.List(ctx, entry.ID)
 }
 func printEntries(output io.Writer, entries []anyshare.Entry, asJSON bool, sizes sizeFormat) error {
-	if entries == nil {
-		entries = []anyshare.Entry{}
-	}
-	if asJSON {
-		e := json.NewEncoder(output)
-		e.SetIndent("", "  ")
-		return e.Encode(entries)
-	}
-	rows := make([][]string, 0, len(entries))
-	for _, e := range entries {
-		typ := e.Type
-		if typ == "" {
-			if e.Dir {
-				typ = "folder"
-			} else {
-				typ = "file"
+	return display.RenderList(output, entries, display.ListOptions[anyshare.Entry]{
+		JSON: asJSON, Indent: "  ", Headers: []string{"NAME", "TYPE", "SIZE", "ID"}, Numbers: []int{2},
+		Row: func(entry anyshare.Entry) []string {
+			kind := entry.Type
+			if kind == "" {
+				if entry.Dir {
+					kind = "folder"
+				} else {
+					kind = "file"
+				}
 			}
-		}
-		size := "-"
-		if !e.Dir && e.Size >= 0 {
-			size = sizes.value(e.Size)
-		}
-		rows = append(rows, []string{e.Name, typ, size, e.ID})
-	}
-	return printTable(output, []string{"NAME", "TYPE", "SIZE", "ID"}, rows, 2)
+			size := "-"
+			if !entry.Dir && entry.Size >= 0 {
+				size = sizes.value(entry.Size)
+			}
+			return []string{entry.Name, kind, size, entry.ID}
+		},
+	})
 }
 func newRecoverCommand() *cobra.Command {
 	var cache string

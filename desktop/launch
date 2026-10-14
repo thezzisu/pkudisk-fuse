@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+task_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+export PKUDISK_DESKTOP_LAUNCH=1
+exec "$task_directory/pkudisk-fuse" gui

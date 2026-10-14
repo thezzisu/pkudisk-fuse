@@ -1,0 +1,36 @@
+@import 'tailwindcss';
+@import '@nuxt/ui';
+
+@theme static {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --color-pku-50: #fff1f2;
+  --color-pku-100: #ffe1e4;
+  --color-pku-200: #ffc7cf;
+  --color-pku-300: #ff9daa;
+  --color-pku-400: #f86a80;
+  --color-pku-500: #e83c5c;
+  --color-pku-600: #c52044;
+  --color-pku-700: #a71638;
+  --color-pku-800: #8e0020;
+  --color-pku-900: #790f2b;
+  --color-pku-950: #450315;
+}
+
+:root {
+  --ui-primary: var(--ui-color-primary-800);
+  --ui-success: var(--ui-color-success-800);
+  --ui-info: var(--ui-color-info-700);
+  --ui-warning: var(--ui-color-warning-800);
+  --ui-error: var(--ui-color-error-700);
+  --ui-text-muted: var(--ui-color-neutral-600);
+  --ui-radius: 0.5rem;
+}
+.dark {
+  --ui-primary: var(--ui-color-primary-300);
+  --ui-success: var(--ui-color-success-400);
+  --ui-info: var(--ui-color-info-400);
+  --ui-warning: var(--ui-color-warning-400);
+  --ui-error: var(--ui-color-error-400);
+  --ui-text-muted: var(--ui-color-neutral-400);
+}

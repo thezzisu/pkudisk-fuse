@@ -219,6 +219,9 @@ func (c *Client) Mkdir(ctx context.Context, parent, name string) (Entry, error) 
 }
 
 func (c *Client) Delete(ctx context.Context, e Entry) error {
+	if err := ValidateDelete(e); err != nil {
+		return err
+	}
 	kind := "file"
 	if e.Dir {
 		kind = "dir"

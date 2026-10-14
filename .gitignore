@@ -5,3 +5,10 @@
 /completions/
 *.test
 coverage.out
+/web/node_modules/
+/web/.nuxt/
+/web/.output/
+/web/dist
+/web/.data/
+/web/.cache/
+/web/.env*

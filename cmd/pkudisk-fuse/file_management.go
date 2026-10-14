@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
+	"github.com/thezzisu/pkudisk-fuse/internal/display"
 )
 
 const confirmationHelp = `Destructive operations ask for confirmation in a terminal. -y/--yes skips
@@ -87,8 +87,8 @@ server retention permits it. This differs from 'recycle remove', which is perman
 			if err != nil {
 				return err
 			}
-			if anyshare.ParentID(entry.ID) == "" {
-				return errors.New("library roots cannot be deleted")
+			if err := anyshare.ValidateDelete(entry); err != nil {
+				return err
 			}
 			if entry.Dir && !recursive {
 				return usageFailure(cmd, "deleting a directory requires --recursive")
@@ -227,13 +227,9 @@ func newRecycleOperation(action string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		entries := []anyshare.RecycleEntry{}
-		for _, library := range libraries {
-			items, err := client.RecycleList(ctx, library.ID)
-			if err != nil {
-				return fmt.Errorf("recycle bin %s: %w", library.Name, err)
-			}
-			entries = append(entries, items...)
+		entries, err := client.RecycleSnapshot(ctx, libraries)
+		if err != nil {
+			return err
 		}
 		if action == "empty" {
 			if len(entries) == 0 {
@@ -246,10 +242,8 @@ func newRecycleOperation(action string) *cobra.Command {
 			if err := confirmOperation(cmd, yes, fmt.Sprintf("Permanently remove these %d recycled objects? This cannot be undone.", len(entries))); err != nil {
 				return err
 			}
-			for i, entry := range entries {
-				if err := client.RecycleDelete(ctx, entry.ID); err != nil {
-					return fmt.Errorf("remove %s: %w (%d of %d objects already removed)", entry.ID, err, i, len(entries))
-				}
+			if _, err := client.RecycleEmpty(ctx, entries, nil); err != nil {
+				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Permanently removed %d recycled objects.\n", len(entries))
 			return nil
@@ -273,21 +267,19 @@ func newRecycleOperation(action string) *cobra.Command {
 }
 
 func printRecycle(out io.Writer, entries []anyshare.RecycleEntry, asJSON bool, sizes sizeFormat) error {
-	if asJSON {
-		return json.NewEncoder(out).Encode(entries)
-	}
-	rows := [][]string{}
-	for _, entry := range entries {
-		size, kind := "-", "folder"
-		if !entry.Dir {
-			kind = "file"
-			if entry.Size >= 0 {
-				size = sizes.value(entry.Size)
+	return display.RenderList(out, entries, display.ListOptions[anyshare.RecycleEntry]{
+		JSON: asJSON, Headers: []string{"NAME", "TYPE", "SIZE", "DELETED", "ORIGINAL PATH", "ID"}, Numbers: []int{2},
+		Row: func(entry anyshare.RecycleEntry) []string {
+			size, kind := "-", "folder"
+			if !entry.Dir {
+				kind = "file"
+				if entry.Size >= 0 {
+					size = sizes.value(entry.Size)
+				}
 			}
-		}
-		rows = append(rows, []string{entry.Name, kind, size, displayTime(entry.Modified), entry.Path, entry.ID})
-	}
-	return printTable(out, []string{"NAME", "TYPE", "SIZE", "DELETED", "ORIGINAL PATH", "ID"}, rows, 2)
+			return []string{entry.Name, kind, size, displayTime(entry.Modified), entry.Path, entry.ID}
+		},
+	})
 }
 
 func displayTime(value time.Time) string {
@@ -350,38 +342,35 @@ func newRevisionOperation(action string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		versions, err := client.Revisions(ctx, entry)
+
+		if action == "ls" {
+			versions, err := client.Revisions(ctx, entry)
+			if err != nil {
+				return err
+			}
+			return display.RenderList(cmd.OutOrStdout(), versions, display.ListOptions[anyshare.Revision]{
+				JSON: asJSON, Headers: []string{"CURRENT", "REV", "SIZE", "MODIFIED", "EDITOR", "NAME"}, Numbers: []int{2},
+				Row: func(revision anyshare.Revision) []string {
+					current := ""
+					if revision.Rev == entry.Rev {
+						current = "*"
+					}
+					return []string{current, revision.Rev, sizes.value(revision.Size), displayTime(revision.Modified), revision.Editor, revision.Name}
+				},
+			})
+		}
+		revision, err := client.Revision(ctx, entry, args[1])
 		if err != nil {
 			return err
 		}
-		if action == "ls" {
-			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(versions)
-			}
-			rows := [][]string{}
-			for _, revision := range versions {
-				current := ""
-				if revision.Rev == entry.Rev {
-					current = "*"
-				}
-				rows = append(rows, []string{current, revision.Rev, sizes.value(revision.Size), displayTime(revision.Modified), revision.Editor, revision.Name})
-			}
-			return printTable(cmd.OutOrStdout(), []string{"CURRENT", "REV", "SIZE", "MODIFIED", "EDITOR", "NAME"}, rows, 2)
+		if err := confirmOperation(cmd, yes, "Restore "+entry.Name+" to revision "+revision.Rev+" ("+displayTime(revision.Modified)+")?"); err != nil {
+			return err
 		}
-		for _, revision := range versions {
-			if revision.Rev != args[1] {
-				continue
-			}
-			if err := confirmOperation(cmd, yes, "Restore "+entry.Name+" to revision "+revision.Rev+" ("+displayTime(revision.Modified)+")?"); err != nil {
-				return err
-			}
-			if err := client.RestoreRevision(ctx, entry, revision.Rev); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Restored %s to revision %s\n", entry.ID, revision.Rev)
-			return nil
+		if err := client.RestoreRevision(ctx, entry, revision.Rev); err != nil {
+			return err
 		}
-		return fmt.Errorf("%w: revision %s; inspect 'revision ls'", anyshare.ErrNotFound, args[1])
+		fmt.Fprintf(cmd.OutOrStdout(), "Restored %s to revision %s\n", entry.ID, revision.Rev)
+		return nil
 	}
 	auth.add(cmd)
 	if action == "ls" {

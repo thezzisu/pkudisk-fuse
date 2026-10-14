@@ -68,6 +68,22 @@ func Lock(ctx context.Context, path string, exclusive bool) (*os.File, error) {
 	}
 }
 
+// TryLock attempts a process lock without waiting. A nil file and nil error
+// means another process owns the lock. Keep the file open for the lock's
+// lifetime, and never unlink a lock file while other processes may use it.
+func TryLock(path string, exclusive bool) (*os.File, error) {
+	file, err := OpenPrivate(path, os.O_RDWR|os.O_CREATE)
+	if err != nil {
+		return nil, err
+	}
+	locked, err := tryLock(file, exclusive)
+	if err != nil || !locked {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
 func CreateTemp(dir, pattern string) (*os.File, error) {
 	if err := EnsurePrivateDir(dir); err != nil {
 		return nil, err

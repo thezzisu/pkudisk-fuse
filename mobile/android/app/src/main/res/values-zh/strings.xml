@@ -1,0 +1,25 @@
+<resources>
+    <string name="intro">正在启动 PKUDisk App…</string>
+    <string name="open_browser">打开界面</string>
+    <string name="stop_service">退出</string>
+    <string name="notification_channel_tasks">任务</string>
+    <string name="notification_channel_tasks_description">正在执行的文件任务进度</string>
+    <string name="notification_processing">正在处理…</string>
+    <string name="notification_upload">正在上传</string>
+    <string name="notification_download">正在下载</string>
+    <string name="notification_copy">正在复制</string>
+    <string name="notification_extract">正在解压</string>
+    <string name="notification_recover">正在恢复</string>
+    <string name="notification_queued">正在等待…</string>
+    <string name="notification_preparing">正在准备…</string>
+    <string name="notification_hashing">正在校验文件…</string>
+    <string name="notification_transferring">正在传输</string>
+    <string name="notification_finalizing">正在完成…</string>
+    <string name="notification_progress_bytes">%1$s / %2$s</string>
+    <string name="notification_progress_count">%1$d / %2$d</string>
+    <string name="notification_progress_percent">%1$d%%</string>
+    <string name="notification_progress_phase">%1$s · %2$s</string>
+    <plurals name="notification_active_tasks">
+        <item quantity="other">%d 个任务正在进行</item>
+    </plurals>
+</resources>
