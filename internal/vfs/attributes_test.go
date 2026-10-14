@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -13,7 +14,13 @@ import (
 	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
 )
 
-func TestSharedErrorCodePreservesWrappedFailures(t *testing.T) {
+func TestSharedErrorCodeNormalizesWrappedFailures(t *testing.T) {
+	notDirectory := syscall.ENOTDIR
+	if runtime.GOOS == "windows" {
+		// Go aliases ENOTDIR to Win32 ERROR_PATH_NOT_FOUND. Like other native
+		// missing-path errors, it is normalized through os.ErrNotExist.
+		notDirectory = syscall.ENOENT
+	}
 	for _, test := range []struct {
 		err  error
 		want syscall.Errno
@@ -24,7 +31,7 @@ func TestSharedErrorCodePreservesWrappedFailures(t *testing.T) {
 		{anyshare.ErrPending, syscall.EACCES}, {anyshare.ErrConflict, syscall.EBUSY},
 		{anyshare.ErrQuota, syscall.ENOSPC}, {anyshare.ErrSizeLimit, syscall.EFBIG},
 		{context.Canceled, syscall.EINTR}, {context.DeadlineExceeded, syscall.ETIMEDOUT},
-		{syscall.EXDEV, syscall.EXDEV}, {syscall.ENOTDIR, syscall.ENOTDIR},
+		{syscall.EXDEV, syscall.EXDEV}, {syscall.ENOTDIR, notDirectory},
 		{errors.New("unexpected remote response"), syscall.EIO},
 	} {
 		if got := errorCode(fmt.Errorf("operation: %w", test.err)); got != test.want {
