@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,6 +35,18 @@ func main() {
 		data := []byte("Android download test\n")
 		server.PutObject(name, mockserver.Object{Entry: anyshare.Entry{ID: mockserver.Library + "/report", Name: "android-report.txt", Size: int64(len(data)), Rev: "1"}, Data: data})
 		server.PutObject(name, mockserver.Object{Entry: anyshare.Entry{ID: mockserver.Library + "/unicode", Name: "移动端下载.txt", Size: int64(len(data)), Rev: "1"}, Data: data})
+		server.PutObject(name, mockserver.Object{Entry: anyshare.Entry{ID: mockserver.Library + "/empty", Name: "空文件.txt", Size: 0, Rev: "1"}, Data: []byte{}})
+		photo := image.NewRGBA(image.Rect(0, 0, 8, 8))
+		for x := range 8 {
+			for y := range 8 {
+				photo.Set(x, y, color.RGBA{R: uint8(24 * x), G: uint8(24 * y), B: 128, A: 255})
+			}
+		}
+		var pngData bytes.Buffer
+		if err := png.Encode(&pngData, photo); err != nil {
+			panic(err)
+		}
+		server.PutObject(name, mockserver.Object{Entry: anyshare.Entry{ID: mockserver.Library + "/photo", Name: "照片.png", Size: int64(pngData.Len()), Rev: "1"}, Data: pngData.Bytes(), Thumbnail: pngData.Bytes()})
 		slow := bytes.Repeat([]byte("background-transfer\n"), (2<<20)/len("background-transfer\n")+1)[:2<<20]
 		for id, filename := range map[string]string{"/slow": "background-transfer.bin", "/slow-second": "background-second.bin"} {
 			server.PutObject(name, mockserver.Object{Entry: anyshare.Entry{ID: mockserver.Library + id, Name: filename, Size: int64(len(slow)), Rev: "1"}, Data: slow, StreamDelay: 750 * time.Millisecond})

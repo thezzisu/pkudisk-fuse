@@ -1,3 +1,16 @@
+diff --git a/node_modules/@nuxt/ui/dist/runtime/components/FileUpload.vue b/node_modules/@nuxt/ui/dist/runtime/components/FileUpload.vue
+index cc9f588..d29d9f8 100644
+--- a/node_modules/@nuxt/ui/dist/runtime/components/FileUpload.vue
++++ b/node_modules/@nuxt/ui/dist/runtime/components/FileUpload.vue
+@@ -217,7 +217,7 @@ defineExpose({
+         :is="variant === 'button' ? 'button' : 'div'"
+         ref="dropzoneRef"
+         :type="variant === 'button' ? 'button' : void 0"
+-        :role="variant === 'button' ? void 0 : 'button'"
++        :role="variant === 'button' || !props.interactive ? void 0 : 'button'"
+         :disabled="variant === 'button' ? disabled : void 0"
+         :aria-disabled="variant === 'button' ? void 0 : disabled || void 0"
+         :data-dragging="isDragging"
 diff --git a/node_modules/@nuxt/ui/dist/runtime/plugins/colors.js b/node_modules/@nuxt/ui/dist/runtime/plugins/colors.js
 index 164c495..b2a9c84 100644
 --- a/node_modules/@nuxt/ui/dist/runtime/plugins/colors.js

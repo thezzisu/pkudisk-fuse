@@ -112,9 +112,21 @@ to see them in the notification drawer. The shell promotes its Service to
 `dataSync` foreground operation only while tasks, incoming requests or login
 operations are active.
 
+Android's standard SplashScreen covers cold launch. The same branded loading
+surface covers service reconnection and WebView startup; it fades out after
+Nuxt authentication, the target route and a rendered frame are ready. Normal
+startup never shows Open/Stop buttons. Retry/Exit actions appear only after a
+startup failure. The transition respects the system animation setting.
+
+The current page, account, directory and query options are encoded in the URL.
+The shell retains only an allowlisted relative path/query, never the activation
+fragment or bearer token, and restores it against the new local origin after
+idle suspension or Activity/process recreation. A read-only DOM readiness marker
+coordinates the reveal; the web page has no native JavaScript interface.
+
 After the app goes into the background with no work, it releases the Go service
-after a one-second idle grace period. Returning opens the service and a fresh
-interface automatically. If work remains active, returning preserves the current
+after a one-second idle grace period. Returning opens the service and restores
+the last route automatically. If work remains active, returning preserves the current
 service and page. The standard system file picker keeps the service available
 while a selection is pending. Completed background work also triggers idle
 release; the app does not keep an empty foreground service running.

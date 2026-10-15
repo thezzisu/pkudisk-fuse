@@ -34,6 +34,12 @@ export default defineNuxtPlugin({
     if (ticket) history.replaceState(null, '', location.pathname + location.search)
     let token: string | null = null
     let checking: Promise<void> | null = null
+    let healthController: AbortController | null = null
+    useEventListener(document, 'visibilitychange', () => {
+      // An idle mobile host deliberately suspends its local service while
+      // hidden. A request from that old page must not latch a false failure.
+      if (state.value.flags.isMobile && document.hidden) healthController?.abort()
+    })
     function clearToken() {
       token = null
       try {
@@ -70,20 +76,25 @@ export default defineNuxtPlugin({
       }
     })
     function checkConnection(): Promise<void> {
-      if (state.value.phase !== 'ready') return Promise.resolve()
+      if (state.value.phase !== 'ready' || (state.value.flags.isMobile && document.hidden))
+        return Promise.resolve()
+      if (checking) return checking
+      const controller = new AbortController()
+      healthController = controller
       // Use a separate fetch so failed health checks never call their own hooks.
       checking ??= $fetch<{ version: string; tray: boolean; flags: HostFlags }>('/api/status', {
         credentials: 'omit',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         retry: 0,
-        timeout: 2500
+        timeout: 2500,
+        signal: controller.signal
       })
         .then((result) => {
-          if (state.value.phase !== 'ready') return
+          if (state.value.phase !== 'ready' || controller.signal.aborted) return
           state.value = { ...state.value, ...result, connection: 'online', lastSeen: Date.now() }
         })
         .catch((error: FetchError) => {
-          if (state.value.phase !== 'ready') return
+          if (state.value.phase !== 'ready' || controller.signal.aborted) return
           if (error.response?.status === 401) {
             clearToken()
             state.value.phase = 'expired'
@@ -91,6 +102,7 @@ export default defineNuxtPlugin({
         })
         .finally(() => {
           checking = null
+          healthController = null
         })
       return checking
     }

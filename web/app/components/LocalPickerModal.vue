@@ -13,6 +13,14 @@ const emit = defineEmits<{ close: [value: { path: string; name: string; dir: boo
 const { $api } = useNuxtApp()
 const { t } = useI18n()
 const format = useFormatting()
+const columns = computed(() => [
+  { accessorKey: 'name', header: t('common.name') },
+  {
+    accessorKey: 'size',
+    header: t('common.size'),
+    meta: { class: { th: 'hidden w-40 md:table-cell', td: 'hidden md:table-cell' } }
+  }
+])
 // An unused drive letter is a mount target, not a browsable directory.
 const path = ref(props.kind === 'mount' && /^[A-Za-z]:$/.test(props.initial) ? '' : props.initial)
 const filter = ref('')
@@ -198,24 +206,50 @@ async function mkdir() {
       </div>
       <UTable
         :data="entries"
-        :columns="[
-          { accessorKey: 'name', header: t('common.name') },
-          { accessorKey: 'size', header: t('common.size') }
-        ]"
+        :columns="columns"
         :loading="status === 'pending'"
         :caption="title || t('localPicker.title')"
+        :ui="{
+          base: 'w-full table-fixed md:table-auto',
+          td: 'whitespace-normal py-2 md:py-3'
+        }"
         class="max-h-80"
       >
         <template #name-cell="{ row }">
           <UButton
-            :icon="row.original.dir ? 'i-lucide-folder' : 'i-lucide-file'"
-            :label="row.original.name"
+            :aria-label="row.original.name"
             :color="selected?.path === row.original.path ? 'primary' : 'neutral'"
             variant="link"
-            class="max-w-full px-0"
-            :ui="{ label: 'truncate' }"
+            class="min-h-11 w-full items-start justify-start gap-2 px-0 py-0 text-start md:min-h-0 md:py-1.5"
             @click="open(row.original)"
-          />
+          >
+            <template #leading>
+              <FileIcon
+                :name="row.original.name"
+                :directory="row.original.dir"
+                :path="row.original.path"
+                class="mt-0.5 size-5"
+              />
+            </template>
+            <template #default>
+              <span class="min-w-0 flex-1">
+                <span class="block min-w-0 text-sm leading-6 [overflow-wrap:anywhere]">
+                  {{ row.original.name }}
+                </span>
+                <span class="text-muted mt-0.5 block text-xs leading-4 md:hidden">
+                  <span>{{
+                    row.original.dir
+                      ? t(row.original.empty ? 'localPicker.emptyFolder' : 'files.folder')
+                      : format.bytes(row.original.size)
+                  }}</span>
+                  <template v-if="format.date(row.original.modified) !== '—'">
+                    <span aria-hidden="true"> · </span>
+                    <span>{{ format.date(row.original.modified) }}</span>
+                  </template>
+                </span>
+              </span>
+            </template>
+          </UButton>
         </template>
         <template #size-cell="{ row }">
           <span class="text-muted">{{

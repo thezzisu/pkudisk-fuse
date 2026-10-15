@@ -1,0 +1,4 @@
+<resources>
+    <color name="startup_background">#18181b</color>
+    <color name="startup_text">#fafafa</color>
+</resources>

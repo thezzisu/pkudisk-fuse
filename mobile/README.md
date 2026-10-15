@@ -54,6 +54,14 @@ remove it from Recents. Unexpected service loss keeps the blocking exit overlay:
 This lifecycle signal uses the existing Go binding and requires no JavaScript
 bridge.
 
+The browser's URL carries navigation state. Native hosts should retain its
+trusted relative path/query and combine it with the next activation origin and
+fresh fragment; do not persist activation links or session credentials. Android
+uses its standard splash plus a loading overlay until the document's
+`data-pkudisk-phase` and first rendered frame are ready. This readiness marker is
+read-only and can also be observed by a WKWebView host without exposing a native
+JavaScript action bridge.
+
 Android's `TaskNotifications.java` renders per-task native progress and groups
 multiple active tasks. Its Service promotes to `dataSync` foreground operation
 while the shared snapshot is busy, removes ongoing notifications when work ends,

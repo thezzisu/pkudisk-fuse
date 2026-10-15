@@ -10,13 +10,26 @@ const table = useTemplateRef('filesTable')
 const pagination = ref({ pageIndex: 0, pageSize: 50 })
 const filter = ref('')
 const draftSearch = ref(String(route.query.q || ''))
-const scopeSearch = ref(false)
-const limit = ref(100)
+const searchScope = computed(() => route.query.scope === 'current')
+const searchLimit = computed(() => {
+  const value = Number(route.query.limit)
+  return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : 100
+})
+const scopeSearch = ref(searchScope.value)
+const limit = ref(searchLimit.value)
 const path = computed(() => String(route.query.path || '/'))
 const query = computed(() => String(route.query.q || ''))
 const trail = ref<{ label: string; path: string }[]>([])
 
-const viewKey = computed(() => JSON.stringify([workspace.selected, path.value, query.value]))
+const viewKey = computed(() =>
+  JSON.stringify([
+    workspace.selected,
+    path.value,
+    query.value,
+    searchScope.value,
+    searchLimit.value
+  ])
+)
 type FileView = Listing & { hits?: number; requestKey: string }
 const empty: FileView = { entries: [], folder: null, writable: false, account: '', requestKey: '' }
 const { data, status, error, refresh } = useLazyAsyncData<FileView>(
@@ -31,8 +44,8 @@ const { data, status, error, refresh } = useLazyAsyncData<FileView>(
         query: {
           account,
           q: query.value,
-          scope: scopeSearch.value && path.value !== '/' ? path.value : '',
-          limit: limit.value
+          scope: searchScope.value && path.value !== '/' ? path.value : '',
+          limit: searchLimit.value
         },
         signal
       })
@@ -41,7 +54,7 @@ const { data, status, error, refresh } = useLazyAsyncData<FileView>(
     const listing = await $api<Listing>('/files', { query: { account, path: path.value }, signal })
     return { ...listing, requestKey }
   },
-  { default: () => empty, watch: [() => workspace.selected, path, query] }
+  { default: () => empty, watch: [viewKey] }
 )
 const interactionReady = computed(
   () => data.value.requestKey === viewKey.value && status.value !== 'error'
@@ -56,7 +69,9 @@ const { transfer, change, menu } = useFileActions({
 
 const breadcrumbs = computed(() => [
   { label: t('files.libraries'), icon: 'i-lucide-cloud', onClick: () => navigate('/') },
-  ...trail.value.map((item) => ({ label: item.label, onClick: () => navigate(item.path) })),
+  ...trail.value
+    .filter((item) => path.value === item.path || path.value.startsWith(`${item.path}/`))
+    .map((item) => ({ label: item.label, onClick: () => navigate(item.path) })),
   ...(data.value.folder && !trail.value.some((item) => item.path === data.value.folder?.id)
     ? [{ label: data.value.folder.name }]
     : [])
@@ -90,10 +105,22 @@ async function open(entry: Entry) {
 }
 async function search() {
   pagination.value.pageIndex = 0
+  const nextQuery = draftSearch.value.trim()
+  const nextScope = scopeSearch.value && path.value !== '/'
+  const unchanged =
+    query.value === nextQuery &&
+    searchScope.value === nextScope &&
+    searchLimit.value === limit.value
   await router.push({
-    query: { ...route.query, account: workspace.selected, q: draftSearch.value.trim() || undefined }
+    query: {
+      ...route.query,
+      account: workspace.selected,
+      q: nextQuery || undefined,
+      scope: nextScope ? 'current' : undefined,
+      limit: limit.value === 100 ? undefined : limit.value
+    }
   })
-  if (query.value === draftSearch.value.trim()) await refresh()
+  if (unchanged) await refresh()
 }
 function up() {
   const id = data.value.folder?.id || path.value
@@ -101,19 +128,24 @@ function up() {
   return navigate(cut > 'gns://'.length ? id.slice(0, cut) : '/')
 }
 watch(
-  [() => route.query.account, () => workspace.ready],
-  ([account]) => {
-    if (typeof account === 'string' && workspace.accounts.some((saved) => saved.name === account))
-      workspace.selected = account
-  },
-  { immediate: true }
-)
-watch(
   () => workspace.selected,
-  (name, old) => {
-    if (old && name !== old && route.query.account !== name) {
-      trail.value = []
-      void router.replace({ path: '/', query: { account: name } })
+  () => {
+    trail.value = []
+  }
+)
+watch([path, query, searchScope, searchLimit], () => {
+  draftSearch.value = query.value
+  scopeSearch.value = searchScope.value
+  limit.value = searchLimit.value
+  filter.value = ''
+  pagination.value.pageIndex = 0
+})
+watch(
+  () => data.value.folder,
+  (folder) => {
+    if (folder && !trail.value.some((item) => item.path === folder.id)) {
+      trail.value.push({ label: folder.name, path: folder.id })
+      trail.value.sort((a, b) => a.path.length - b.path.length)
     }
   }
 )
@@ -164,13 +196,10 @@ async function clearFilters() {
       />
     </template>
     <OperationError v-if="error" :error="error" class="m-4 sm:mx-6" />
-    <AccountEmptyState
-      v-if="workspace.ready && !workspace.accounts.length"
-      class="flex-1"
-    />
+    <AccountEmptyState v-if="workspace.ready && !workspace.accounts.length" class="flex-1" />
     <template v-else>
       <div
-        class="flex w-full shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6"
+        class="flex w-full shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2 sm:px-6"
       >
         <div class="flex w-full min-w-0 flex-1 items-center gap-2 sm:w-auto">
           <UButton
@@ -192,14 +221,17 @@ async function clearFilters() {
             }"
           />
         </div>
-        <UInput
-          v-model="filter"
-          icon="i-lucide-list-filter"
-          :placeholder="t('files.filterPlaceholder')"
-          :aria-label="t('files.filterPlaceholder')"
-          size="sm"
-          class="w-full sm:w-auto"
-        />
+        <div class="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+          <UInput
+            v-model="filter"
+            icon="i-lucide-list-filter"
+            :placeholder="t('files.filterPlaceholder')"
+            :aria-label="t('files.filterPlaceholder')"
+            size="sm"
+            class="min-w-0 flex-1"
+          />
+          <FileSortControl />
+        </div>
       </div>
       <UAlert
         v-if="query && data.hits && data.hits > data.entries.length"
@@ -220,6 +252,7 @@ async function clearFilters() {
         ref="filesTable"
         v-model:filter="filter"
         v-model:pagination="pagination"
+        :account="data.account"
         :failed="Boolean(error)"
         :entries="tableData"
         :stats="data.stats"

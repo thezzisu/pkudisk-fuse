@@ -8,7 +8,6 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.SystemClock;
 import java.io.File;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -19,8 +18,11 @@ import su.zzi.pkudiskfuse.mobile.mobilegui.Mobilegui;
 /** Android lifecycle and notification policy around the shared mobile core. */
 public final class GuiService extends Service {
     public interface Listener {
-        void onStatus(String message);
+        void onConnecting();
         void onOpen(String address);
+        void onReady();
+        void onStopped();
+        void onFailure();
     }
     public final class LocalBinder extends Binder {
         GuiService service() { return GuiService.this; }
@@ -33,26 +35,30 @@ public final class GuiService extends Service {
     private Listener listener;
     private TaskNotifications notifications;
     private boolean starting, destroyed, opening, checking, suspending, visible, pickerActive;
-    private String pendingURL, origin;
-    private long pendingAt;
-    private String status = "Local service stopped.";
+    private String origin, requestedOrigin;
+    private int lastStartId;
     private final Runnable monitor = this::refresh;
     private final Runnable idle = () -> {
         if (destroyed || starting || visible || pickerActive || suspending) return;
         suspending = true;
+        final int idleStartId = lastStartId;
         COMMANDS.execute(() -> {
             boolean released = bridge.suspend();
             main.post(() -> {
                 suspending = false;
                 if (destroyed) return;
                 if (released) {
+                    origin = null;
                     notifications.clear();
                     if (visible || pickerActive) { opening = true; requestOpen(); }
                     else {
                         main.removeCallbacks(monitor);
-                        stopSelf();
+                        stopSelf(idleStartId);
                     }
-                } else refresh();
+                } else {
+                    if (opening) open(requestedOrigin);
+                    refresh();
+                }
             });
         });
     };
@@ -67,14 +73,12 @@ public final class GuiService extends Service {
     }
     @Override public IBinder onBind(Intent intent) { return binder; }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        // Started while the Activity is visible. Foreground promotion is only
-        // necessary when work is active; idle use needs no persistent notification.
+        lastStartId = startId;
+        // Idle visible use needs no persistent notification. Work promotes the
+        // service to foreground operation through the task snapshot below.
         return START_NOT_STICKY;
     }
-    void setListener(Listener next) {
-        listener = next;
-        if (next != null) next.onStatus(status);
-    }
+    void setListener(Listener next) { listener = next; }
     void setVisible(boolean value) {
         visible = value;
         if (value) main.removeCallbacks(idle);
@@ -87,17 +91,27 @@ public final class GuiService extends Service {
     }
     boolean running() { return bridge.running(); }
     void open(String loadedOrigin) {
-        if (loadedOrigin != null && loadedOrigin.equals(origin) && bridge.running()) return;
-        // Only an intentional idle release auto-resumes an existing window.
-        // A timeout or failure must retain the web UI's stopped overlay.
-        if (loadedOrigin != null && !bridge.running() && !bridge.suspended() && !starting) return;
+        if (BuildConfig.DEBUG) android.util.Log.d("PKUDiskLifecycle", "open loaded=" + (loadedOrigin != null) + " starting=" + starting + " suspending=" + suspending + " running=" + bridge.running());
+        requestedOrigin = loadedOrigin;
         opening = true;
-        if (pendingURL != null && SystemClock.uptimeMillis() - pendingAt < 45000) deliverURL();
-        else if (!starting && !suspending) requestOpen();
+        if (listener != null) listener.onConnecting();
+        // Neither a cached activation nor the old document is usable while an
+        // idle release is in flight. Its completion resumes this request.
+        if (suspending || starting) return;
+        if (loadedOrigin != null && loadedOrigin.equals(origin) && bridge.running()) {
+            opening = false;
+            if (listener != null) listener.onReady();
+            return;
+        }
+        if (loadedOrigin != null && !bridge.running() && !bridge.suspended()) {
+            opening = false;
+            if (listener != null) listener.onStopped();
+            return;
+        }
+        requestOpen();
     }
     private void requestOpen() {
         starting = true;
-        update("Starting local service…");
         COMMANDS.execute(() -> {
             try {
                 String address = bridge.open();
@@ -108,19 +122,18 @@ public final class GuiService extends Service {
                     if (!"http".equals(uri.getScheme()) || !"127.0.0.1".equals(uri.getHost()) || uri.getPort() < 1
                             || uri.getUserInfo() != null || uri.getQuery() != null || !"/".equals(uri.getPath())
                             || uri.getFragment() == null || !uri.getFragment().startsWith("ticket=")) {
-                        ended("The local service returned an invalid address.");
+                        failed();
                         return;
                     }
                     origin = uri.getScheme() + "://" + uri.getAuthority();
-                    pendingURL = address;
-                    pendingAt = SystemClock.uptimeMillis();
-                    update("Local service running.");
+                    if (BuildConfig.DEBUG) android.util.Log.d("PKUDiskLifecycle", "activation ready opening=" + opening + " visible=" + visible + " listener=" + (listener != null));
+                    if (opening && listener != null && visible) listener.onOpen(address);
+                    // An activation returned while hidden is deliberately not
+                    // cached. A later open obtains a fresh single-use ticket.
+                    opening = false;
                     refresh();
-                    deliverURL();
                 });
-            } catch (Exception error) {
-                main.post(() -> ended(error.getMessage()));
-            }
+            } catch (Exception error) { main.post(this::failed); }
         });
     }
     private void refresh() {
@@ -145,48 +158,34 @@ public final class GuiService extends Service {
                     else if (!main.hasCallbacks(idle)) main.postDelayed(idle, 1000);
                     main.postDelayed(monitor, 500);
                 });
-            } catch (Exception error) {
-                main.post(() -> { checking = false; ended(error.getMessage()); });
-            }
+            } catch (Exception error) { main.post(() -> { checking = false; failed(); }); }
         });
     }
     void stop() {
         COMMANDS.execute(() -> {
             try { bridge.stop(); main.post(this::ended); }
-            catch (Exception error) { main.post(() -> update(error.getMessage())); }
+            catch (Exception error) { main.post(() -> { if (listener != null) listener.onFailure(); }); }
         });
     }
-    private void deliverURL() {
-        if (opening && listener != null && pendingURL != null) {
-            String address = pendingURL;
-            pendingURL = null;
-            opening = false;
-            listener.onOpen(address);
-        }
-    }
-    private void update(String message) {
+    private void failed() {
         if (destroyed) return;
-        status = message;
-        if (listener != null) listener.onStatus(message);
+        ended();
+        if (listener != null) listener.onFailure();
     }
-    private void ended() { ended("Local service stopped."); }
-    private void ended(String message) {
+    private void ended() {
         if (destroyed) return;
         starting = false;
-        pendingURL = null;
         opening = false;
         main.removeCallbacks(monitor);
         main.removeCallbacks(idle);
-        update(message);
         notifications.clear();
         stopSelf();
         if (bridge.quitRequested()) {
             for (ActivityManager.AppTask task : getSystemService(ActivityManager.class).getAppTasks())
                 task.finishAndRemoveTask();
-        }
+        } else if (listener != null) listener.onStopped();
     }
     @Override public void onTimeout(int startId, int fgsType) {
-        // Android's dataSync budget is a forced stop, never an idle suspension.
         COMMANDS.execute(bridge::close);
         ended();
     }

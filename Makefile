@@ -7,7 +7,7 @@ build:
 ui:
 	cd web && npm ci && npm run build
 ui-check:
-	cd web && npm run lint && npm run typecheck && node scripts/source-hash.mjs --check
+	cd web && npm run lint && npm run typecheck && npm run test:icons && node scripts/source-hash.mjs --check
 test:
 	$(GO) test -race ./...
 	cd mobile && $(GO) test -race ./...

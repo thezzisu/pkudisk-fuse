@@ -8,6 +8,7 @@ const workspace = useWorkspaceStore()
 const error = ref<unknown>(null)
 async function refreshAccounts() {
   await workspace.refreshAccounts()
+  await selectAccount(workspace.selected)
   error.value = null
 }
 const { run } = useApiAction({
@@ -16,6 +17,7 @@ const { run } = useApiAction({
   success: true
 })
 const confirm = useOverlay().create(ConfirmModal)
+const selectAccount = useAccountNavigation()
 onMounted(() =>
   refreshAccounts().catch((err) => {
     error.value = err
@@ -44,7 +46,6 @@ async function remove(account: Account) {
   })
 }
 async function files(account: Account) {
-  workspace.selected = account.name
   await navigateTo({ path: '/', query: { account: account.name } })
 }
 </script>

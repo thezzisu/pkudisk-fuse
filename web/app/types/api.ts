@@ -43,6 +43,7 @@ export interface AccountsResponse {
   cache: string
 }
 export interface Entry {
+  thumbnail?: boolean
   id: string
   name: string
   directory: boolean

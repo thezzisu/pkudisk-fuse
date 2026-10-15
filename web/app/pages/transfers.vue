@@ -9,7 +9,17 @@ const format = useFormatting()
 const feedback = useFeedback()
 const confirm = useOverlay().create(ConfirmModal)
 const browser = useBrowserTransfersStore()
-const selected = ref('all')
+const route = useRoute()
+const router = useRouter()
+const selected = computed({
+  get: () =>
+    route.query.status === 'active' || route.query.status === 'history'
+      ? route.query.status
+      : 'all',
+  set: (value: string | number) => {
+    void router.push({ query: { ...route.query, status: value === 'all' ? undefined : value } })
+  }
+})
 const active = (task: Job) => ['queued', 'running', 'stopping'].includes(task.state)
 const tasks = computed(() =>
   workspace.tasks.filter(
@@ -92,53 +102,48 @@ async function clear(task: Job) {
       class="py-12 sm:py-16"
     />
     <div v-else class="divide-default -mx-4 divide-y sm:-mx-6">
-      <article v-for="task in tasks" :key="task.id" class="space-y-3 px-4 py-4 first:pt-0 sm:px-6">
-        <div class="flex items-start gap-3">
-          <div class="bg-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
-            <UIcon
-              :name="
-                task.kind === 'upload'
-                  ? 'i-lucide-upload'
-                  : task.kind === 'download'
-                    ? 'i-lucide-download'
-                    : 'i-lucide-folder-sync'
-              "
-              class="text-primary size-5"
-            />
-          </div>
-          <div class="min-w-0 flex-1">
-            <p class="text-highlighted truncate font-medium">
-              {{ task.name }}
-            </p>
-            <p class="text-muted mt-1 text-xs">
-              {{ t(`tasks.kinds.${task.kind}`) }} · {{ task.account }} ·
-              {{ format.date(task.created) }}
-            </p>
-          </div>
-          <UBadge
-            :color="colors[task.state as keyof typeof colors] || 'neutral'"
-            variant="subtle"
-            :label="t(`tasks.states.${task.state}`)"
+      <article v-for="task in tasks" :key="task.id" class="space-y-2 px-4 py-3 first:pt-0 sm:px-6">
+        <div class="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5">
+          <UIcon
+            :name="
+              task.kind === 'upload'
+                ? 'i-lucide-upload'
+                : task.kind === 'download'
+                  ? 'i-lucide-download'
+                  : 'i-lucide-folder-sync'
+            "
+            class="text-primary size-5 self-start justify-self-center my-0.5"
           />
+          <p
+            class="text-highlighted min-w-0 text-sm leading-6 font-medium [overflow-wrap:anywhere]"
+          >
+            {{ task.name }}
+          </p>
           <UButton
-            v-if="active(task)"
-            icon="i-lucide-x"
-            :aria-label="t('tasks.cancel')"
+            :icon="active(task) ? 'i-lucide-x' : 'i-lucide-trash-2'"
+            :aria-label="t(active(task) ? 'tasks.cancel' : 'tasks.remove')"
             color="neutral"
             variant="ghost"
+            class="row-span-2 size-11 self-center justify-center"
             :disabled="task.state === 'stopping'"
-            @click="cancel(task)"
+            @click="active(task) ? cancel(task) : clear(task)"
           />
-          <UButton
-            v-else
-            icon="i-lucide-trash-2"
-            :aria-label="t('tasks.remove')"
-            color="neutral"
-            variant="ghost"
-            @click="clear(task)"
-          />
+          <div
+            class="text-muted col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-4"
+          >
+            <UBadge
+              :color="colors[task.state as keyof typeof colors] || 'neutral'"
+              variant="subtle"
+              size="xs"
+              :label="t(`tasks.states.${task.state}`)"
+            />
+            <span class="[overflow-wrap:anywhere]"
+              >{{ t(`tasks.kinds.${task.kind}`) }} · {{ task.account }} ·
+              {{ format.date(task.created) }}</span
+            >
+          </div>
         </div>
-        <div v-if="active(task)" class="space-y-2 sm:ml-13">
+        <div v-if="active(task)" class="space-y-2 ms-8">
           <UProgress :model-value="task.total > 0 || task.percent > 0 ? task.percent : undefined" />
           <div class="text-muted flex justify-between text-xs">
             <span>{{
@@ -158,11 +163,11 @@ async function clear(task: Job) {
             }}</span>
           </div>
         </div>
-        <div class="text-muted grid gap-1 text-xs sm:ml-13">
+        <div class="text-muted grid gap-1 text-xs ms-8">
           <p class="break-all">{{ t('files.source') }}: {{ task.source || '—' }}</p>
           <p class="break-all">{{ t('files.destination') }}: {{ task.destination || '—' }}</p>
         </div>
-        <OperationError v-if="task.error" :error="task.error" class="sm:ml-13" />
+        <OperationError v-if="task.error" :error="task.error" class="ms-8" />
       </article>
     </div>
   </WorkspacePanel>

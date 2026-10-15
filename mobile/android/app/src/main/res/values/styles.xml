@@ -1,9 +1,16 @@
 <resources>
     <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#a8002f</item>
-        <item name="android:navigationBarColor">#ffffff</item>
-        <item name="android:statusBarColor">#ffffff</item>
+        <item name="android:colorAccent">@color/startup_accent</item>
+        <item name="android:windowBackground">@color/startup_background</item>
+        <item name="android:navigationBarColor">@color/startup_background</item>
+        <item name="android:statusBarColor">@color/startup_background</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/icon</item>
+        <item name="windowSplashScreenBackground">@color/startup_background</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
     </style>
 </resources>

@@ -46,7 +46,10 @@ watch(
   }
 )
 const head = useLocaleHead()
-useHead(() => ({ htmlAttrs: head.value.htmlAttrs, title: appName.value }))
+useHead(() => ({
+  htmlAttrs: { ...head.value.htmlAttrs, 'data-pkudisk-phase': session.value.phase },
+  title: appName.value
+}))
 </script>
 
 <template>

@@ -28,6 +28,7 @@ type Object struct {
 	Entry       anyshare.Entry
 	Data        []byte
 	StreamDelay time.Duration // Optional pause between each 64 KiB of a download.
+	Thumbnail   []byte        // Optional server-generated raster thumbnail.
 }
 type fixtureObject = Object
 type fixtureAccount struct {
@@ -79,6 +80,7 @@ func (f *Server) PutObject(account string, object Object) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	object.Data = append([]byte(nil), object.Data...)
+	object.Thumbnail = append([]byte(nil), object.Thumbnail...)
 	f.users[account].objects[object.Entry.ID] = object
 }
 func (f *Server) Objects(account string) []Object {
@@ -88,6 +90,7 @@ func (f *Server) Objects(account string) []Object {
 	if user := f.users[account]; user != nil {
 		for _, object := range user.objects {
 			object.Data = append([]byte(nil), object.Data...)
+			object.Thumbnail = append([]byte(nil), object.Thumbnail...)
 			result = append(result, object)
 		}
 	}
@@ -169,7 +172,7 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	account := f.tokens[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
-	if strings.HasPrefix(r.URL.Path, "/objects") || r.URL.Path == "/package" {
+	if strings.HasPrefix(r.URL.Path, "/objects") || r.URL.Path == "/package" || r.URL.Path == "/thumbnails" {
 		account = r.URL.Query().Get("account")
 	}
 	u := f.users[account]
@@ -185,6 +188,31 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 	get := func(key string) string { v, _ := body[key].(string); return v }
 	respond := func(value any) { _ = json.NewEncoder(w).Encode(value) }
 	id := get("docid")
+	if r.URL.Path == "/api/open-doc/v1/file-thumbnail" {
+		for id, object := range u.objects {
+			if id[strings.LastIndexByte(id, '/')+1:] != r.URL.Query().Get("id") {
+				continue
+			}
+			if !anyshare.ThumbnailSupported(object.Entry.Name) || len(object.Thumbnail) == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			respond(map[string]string{"url": f.URL + "/thumbnails?" + url.Values{"account": {account}, "id": {id}}.Encode()})
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Path == "/thumbnails" {
+		object, ok := u.objects[r.URL.Query().Get("id")]
+		if !ok || len(object.Thumbnail) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", http.DetectContentType(object.Thumbnail))
+		_, _ = w.Write(object.Thumbnail)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/objects") {
 		id = r.URL.Query().Get("id")
 		if r.Method == http.MethodPost {

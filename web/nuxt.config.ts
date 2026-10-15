@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import license from 'rollup-plugin-license'
+import { generateMaterialIcons } from './scripts/material-icons.mjs'
 
 export default defineNuxtConfig({
   modules: ['@nuxt/eslint', '@nuxt/ui', '@nuxtjs/i18n', '@vueuse/nuxt', '@pinia/nuxt'],
@@ -36,6 +37,8 @@ export default defineNuxtConfig({
         '@uppy/xhr-upload',
         'browser-fs-access',
         'pretty-bytes',
+        'lru-cache',
+        'p-limit',
         'zod',
         'zod/v4/locales/en.js',
         'zod/v4/locales/zh-CN.js'
@@ -43,6 +46,7 @@ export default defineNuxtConfig({
     }
   },
   hooks: {
+    ready: generateMaterialIcons,
     'vite:extendConfig': (config, { isClient }) => {
       if (isClient) {
         config.plugins?.push(

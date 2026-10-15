@@ -144,6 +144,7 @@ func (a *Application) routes() {
 	m.HandleFunc("POST /api/logins/{id}/answer", a.loginRequest)
 	m.HandleFunc("DELETE /api/logins/{id}", a.loginRequest)
 	m.HandleFunc("GET /api/files", a.listFiles)
+	m.HandleFunc("GET /api/thumbnail", a.thumbnail)
 	m.HandleFunc("GET /api/search", a.searchFiles)
 	m.HandleFunc("GET /api/quota", a.quota)
 	m.HandleFunc("POST /api/files/action", jsonHandler(http.StatusOK, a.fileAction))
@@ -267,7 +268,7 @@ func (a *Application) listFiles(w http.ResponseWriter, r *http.Request) {
 	if folder == nil {
 		stats = anyshare.LibraryStats(r.Context(), c.Client, entries)
 	}
-	writeJSON(w, map[string]any{"entries": entries, "folder": folder, "writable": writable, "account": c.Name, "stats": stats})
+	writeJSON(w, map[string]any{"entries": thumbnailEntries(entries), "folder": folder, "writable": writable, "account": c.Name, "stats": stats})
 }
 
 func queryLimit(r *http.Request) (int, error) {
@@ -297,7 +298,7 @@ func (a *Application) searchFiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"entries": result.Files, "hits": result.Hits, "next": result.Next})
+	writeJSON(w, map[string]any{"entries": thumbnailSearchEntries(result.Files), "hits": result.Hits, "next": result.Next})
 }
 
 func (a *Application) quota(w http.ResponseWriter, r *http.Request) {

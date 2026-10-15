@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const workspace = useWorkspaceStore()
+const selectAccount = useAccountNavigation()
 const { t } = useI18n()
 const items = computed(() =>
   workspace.accounts.map((account) => ({
@@ -13,11 +14,12 @@ const items = computed(() =>
 <template>
   <USelectMenu
     v-if="items.length"
-    v-model="workspace.selected"
+    :model-value="workspace.selected"
     :items="items"
     value-key="value"
     :aria-label="t('common.account')"
     :placeholder="t('common.selectAccount')"
     class="w-40 sm:w-48"
+    @update:model-value="selectAccount"
   />
 </template>

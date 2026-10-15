@@ -259,6 +259,36 @@ Neither API exposed a job cancellation endpoint in the official bundle. Cancelli
 
 Live acceptance compared file SHA-256 across recursive upload/download, server ZIP download, local extraction, remote extraction and overwrite merging; unrelated local files and all direct-transfer empty directories survived. Temporary remote fixtures were deleted. The official client/package was only unpacked under `/tmp` and inspected read-only, never installed or executed.
 
+## File thumbnails
+
+The official AnyShare 7.0.6 desktop bundle uses this read-only request for file
+icons (list size `24*24`, medium `96*96`, large `228*120`):
+
+```text
+GET /api/open-doc/v1/file-thumbnail?id=LAST-COMPONENT-OF-GNS-ID&type=96*96&redirect=false
+Authorization: Bearer ACCOUNT-TOKEN
+```
+
+It returns `{"url":"SIGNED-OBJECT-STORAGE-URL"}`. The official browser client
+also supplies a token query parameter, but the deployed API accepts the bearer
+header alone. HTTP 503 with code `503008001` means the thumbnail is being
+generated. The official icon support list includes images, video, Photoshop,
+Illustrator and CAD files; office documents and PDFs keep ordinary file icons.
+
+A read-only live check on 2026-10-14 confirmed a JPEG thumbnail: API HTTP 200,
+an HTTPS signed URL on a different storage origin, then 5,758 bytes of
+`image/jpeg`. No original file was uploaded or modified for this check. The
+implemented core method was checked against the same deployed request.
+
+The GUI fetches `/api/thumbnail?account=...&path=...` with its normal bearer
+session and receives only raster bytes. It never accepts or exposes a remote
+URL. Upstream storage requests carry no account bearer or cookies, refuse
+redirects and HTTPS downgrades, and limit thumbnail bodies to 2 MiB. Detected
+JPEG/PNG/GIF/WebP content is accepted; HTML and SVG are rejected. Requests have
+a 15-second deadline and follow caller cancellation. Private responses use
+`Cache-Control: no-store`; thumbnail-generation delays return
+`ERR_THUMBNAIL_PENDING` so the UI can retain its file icon without busy polling.
+
 ## Recovery boundary
 
 The local cache is created below `--cache-dir` with mode `0700`. A dirty inode has an adjacent JSON journal containing only the remote ID, parent ID, revision, cache basename, and update time. It does not contain credentials or signed URLs. A failed upload returns an error to the caller and leaves the cache and journal in place for `recover` inspection.

@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +18,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/thezzisu/pkudisk-fuse/internal/anyshare"
+	"github.com/thezzisu/pkudisk-fuse/internal/anyshare/mockserver"
 )
 
 func uploadRequest(t *testing.T, s *server, token, relative string, data []byte, overwrite bool) *httptest.ResponseRecorder {
@@ -273,6 +279,152 @@ func TestConcurrentAttachmentRequestsCannotExceedTwoUses(t *testing.T) {
 	if accepted != 2 {
 		t.Fatal("proof retrieval limit raced", accepted)
 	}
+}
+
+// Exercise a real connection: ResponseRecorder cannot detect whether net/http
+// accidentally completed a truncated chunked response with its final chunk.
+func TestInterruptedAttachmentsAbortHTTPStream(t *testing.T) {
+	for _, archive := range []bool{false, true} {
+		name := "file"
+		if archive {
+			name = "archive"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, a, s, session := applicationServer(t)
+			endpoint := attachmentHTTPServer(t, s, func(w http.ResponseWriter) http.ResponseWriter {
+				return &interruptedDownloadWriter{ResponseWriter: w}
+			})
+			prepared := prepareAttachment(t, s, session, archive)
+			response := getAttachment(t, endpoint, prepared)
+			defer response.Body.Close()
+			data, err := io.ReadAll(response.Body)
+			if response.StatusCode != http.StatusOK || len(data) != 32 || !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("interrupted download reported success: status=%d bytes=%d error=%v", response.StatusCode, len(data), err)
+			}
+			if archive && response.ContentLength != -1 {
+				t.Fatal("archive did not exercise an unknown-length stream")
+			}
+			assertAttachmentJob(t, a, prepared.ID, "failed")
+		})
+	}
+}
+
+type interruptedDownloadWriter struct{ http.ResponseWriter }
+
+func (w *interruptedDownloadWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *interruptedDownloadWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data[:min(32, len(data))])
+	if err != nil {
+		return n, err
+	}
+	if err := http.NewResponseController(w.ResponseWriter).Flush(); err != nil {
+		return n, err
+	}
+	return n, io.ErrUnexpectedEOF
+}
+
+func attachmentHTTPServer(t *testing.T, s *server, wrap func(http.ResponseWriter) http.ResponseWriter) *httptest.Server {
+	t.Helper()
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if wrap != nil && strings.HasPrefix(r.URL.Path, "/download/") {
+			w = wrap(w)
+		}
+		s.ServeHTTP(w, r)
+	}))
+	s.origin = endpoint.URL
+	s.host = strings.TrimPrefix(endpoint.URL, "http://")
+	t.Cleanup(endpoint.Close)
+	return endpoint
+}
+
+func getAttachment(t *testing.T, endpoint *httptest.Server, prepared preparedDownload) *http.Response {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodGet, endpoint.URL+prepared.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.AddCookie(prepared.cookie)
+	response, err := endpoint.Client().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func assertAttachmentJob(t *testing.T, a *Application, clientID, state string) {
+	t.Helper()
+	var matched []jobSnapshot
+	for _, snapshot := range a.snapshotJobs() {
+		if snapshot.info.ClientID == clientID {
+			matched = append(matched, snapshot)
+		}
+	}
+	if len(matched) != 1 || matched[0].info.State != state || matched[0].active {
+		t.Fatalf("attachment was not joined as %s: %+v", state, matched)
+	}
+}
+
+func TestAttachmentCancellationAbortsStreamAndReleasesTask(t *testing.T) {
+	f, a, s, session := applicationServer(t)
+	payload := bytes.Repeat([]byte("slow download\n"), 20000)
+	f.server.PutObject("campus", mockserver.Object{
+		Entry: anyshare.Entry{ID: fixtureLibrary + "/report", Name: "研究报告.txt", Size: int64(len(payload)), Rev: "current"},
+		Data:  payload, StreamDelay: time.Minute,
+	})
+	endpoint := attachmentHTTPServer(t, s, nil)
+	prepared := prepareAttachment(t, s, session, false)
+	response := getAttachment(t, endpoint, prepared)
+	defer response.Body.Close()
+	if _, err := io.CopyN(io.Discard, response.Body, 1); err != nil {
+		t.Fatal(err)
+	}
+	rows := a.snapshotJobs()
+	if len(rows) != 1 || !rows[0].active {
+		t.Fatal("download was not active", rows)
+	}
+	if w := appRequest(t, s, session, http.MethodPost, "/api/tasks/"+rows[0].info.ID+"/cancel", nil); w.Code != http.StatusNoContent {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if _, err := io.ReadAll(response.Body); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatal("cancelled attachment looked complete", err)
+	}
+	assertAttachmentJob(t, a, prepared.ID, "cancelled")
+}
+
+func TestAttachmentEmptyUnicodeAndArchiveContents(t *testing.T) {
+	f, a, s, session := applicationServer(t)
+	const name = "空文件 中文 résumé.txt"
+	f.server.PutObject("campus", mockserver.Object{Entry: anyshare.Entry{ID: fixtureLibrary + "/report", Name: name, Size: 0, Rev: "current"}})
+	endpoint := attachmentHTTPServer(t, s, nil)
+	prepared := prepareAttachment(t, s, session, false)
+	response := getAttachment(t, endpoint, prepared)
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	media, params, parseErr := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+	if err != nil || len(data) != 0 || response.StatusCode != http.StatusOK || response.ContentLength != 0 || parseErr != nil || media != "attachment" || params["filename"] != name {
+		t.Fatal("empty Unicode attachment changed", response.StatusCode, response.Header, data, err, parseErr)
+	}
+	assertAttachmentJob(t, a, prepared.ID, "completed")
+
+	archive := prepareAttachment(t, s, session, true)
+	response = getAttachment(t, endpoint, archive)
+	data, err = io.ReadAll(response.Body)
+	response.Body.Close()
+	reader, zipErr := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	media, params, parseErr = mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+	if err != nil || zipErr != nil || parseErr != nil || media != "attachment" || params["filename"] != "课程资料.zip" || len(reader.File) != 1 || reader.File[0].Name != "课程资料/读书笔记.md" {
+		t.Fatal("invalid archive attachment", response.Header, err, zipErr, parseErr)
+	}
+	file, err := reader.File[0].Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	contents, err := io.ReadAll(file)
+	if err != nil || !bytes.Equal(contents, bytes.Repeat([]byte("fixture!"), 192)) {
+		t.Fatal("archive entry bytes differ", len(contents), err)
+	}
+	assertAttachmentJob(t, a, archive.ID, "completed")
 }
 
 func TestControlStopWaitsForCleanupAndRefusesActiveWork(t *testing.T) {

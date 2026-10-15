@@ -30,6 +30,7 @@ jobs:
         run: |
           npm run lint --prefix web
           npm run typecheck --prefix web
+          npm run test:icons --prefix web
           node web/scripts/source-hash.mjs --check
       - name: Build static frontend
         run: npm run build --prefix web

@@ -20,10 +20,18 @@ const columns = computed(() => [
   {
     accessorKey: 'editor',
     header: t('history.editor'),
-    meta: { class: { th: 'hidden sm:table-cell', td: 'hidden sm:table-cell' } }
+    meta: { class: { th: 'hidden md:table-cell', td: 'hidden md:table-cell' } }
   },
-  { accessorKey: 'size', header: t('common.size') },
-  { id: 'actions', header: () => h('span', { class: 'sr-only' }, t('common.actions')) }
+  {
+    accessorKey: 'size',
+    header: t('common.size'),
+    meta: { class: { th: 'hidden md:table-cell', td: 'hidden md:table-cell' } }
+  },
+  {
+    id: 'actions',
+    header: () => h('span', { class: 'sr-only' }, t('common.actions')),
+    meta: { class: { th: 'w-20 md:w-32', td: 'text-end' } }
+  }
 ])
 async function restore(revision: Revision) {
   if (
@@ -62,14 +70,23 @@ async function restore(revision: Revision) {
         :columns="columns"
         :caption="t('history.title')"
         :loading="status === 'pending' || status === 'idle'"
+        :ui="{ base: 'w-full table-fixed md:table-auto', td: 'whitespace-normal py-2 md:py-3' }"
       >
         <template #modified_at-cell="{ row }">
-          <p class="whitespace-nowrap text-xs sm:text-sm">
+          <p class="text-highlighted leading-6">
             {{ format.date(row.original.modified_at) }}
           </p>
-          <p class="text-muted mt-1 text-xs sm:hidden">{{ row.original.editor }}</p>
           <p
-            class="text-muted mt-1 max-w-40 truncate text-xs sm:max-w-56"
+            class="text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-4 md:hidden"
+          >
+            <span>{{ format.bytes(row.original.size) }}</span>
+            <template v-if="row.original.editor">
+              <span aria-hidden="true">·</span>
+              <span class="[overflow-wrap:anywhere]">{{ row.original.editor }}</span>
+            </template>
+          </p>
+          <p
+            class="text-muted mt-0.5 text-xs leading-4 [overflow-wrap:anywhere] md:max-w-56"
             :title="row.original.rev"
           >
             {{ row.original.rev }}
@@ -83,10 +100,11 @@ async function restore(revision: Revision) {
             icon="i-lucide-history"
             :label="t('history.restore')"
             :aria-label="t('history.restore')"
-            :ui="{ label: 'hidden sm:inline' }"
+            :ui="{ label: 'hidden md:inline' }"
+            class="min-h-11 min-w-11 justify-center md:min-h-0 md:min-w-0"
             color="neutral"
             variant="outline"
-            size="xs"
+            size="sm"
             :disabled="busy"
             @click="restore(row.original)"
           />

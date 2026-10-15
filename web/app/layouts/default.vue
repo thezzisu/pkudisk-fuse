@@ -50,6 +50,7 @@ const links = computed<NavigationMenuItem[][]>(() => [
 
 const { pause, resume } = useIntervalFn(
   async () => {
+    if (mobile.value && document.hidden) return
     await $checkConnection()
     if (session.value.connection === 'online') await workspace.refreshTasks().catch(() => {})
   },

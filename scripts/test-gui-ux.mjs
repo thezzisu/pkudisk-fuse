@@ -44,14 +44,173 @@ try {
   await page.goto(address)
   await page.getByRole('button', { name: '个人文档库', exact: true }).waitFor()
 
+  // A sidebar navigation must push a history entry even when its link omits
+  // the account query. Canonicalizing that URL must not replace the folder.
+  await page.getByRole('button', { name: '个人文档库', exact: true }).click()
+  await page.getByRole('button', { name: '课程资料', exact: true }).click()
+  await page.getByRole('button', { name: '读书笔记.md', exact: true }).waitFor()
+  const beforeSidebar = page.url()
+  await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+  await page.getByRole('link', { name: /^传输任务/ }).click()
+  await page.getByRole('main', { name: '传输与操作', exact: true }).waitFor()
+  await page.goBack()
+  await until(() => new URL(page.url()).pathname === '/', 'sidebar Back returns to files')
+  assert.equal(page.url(), beforeSidebar, 'sidebar navigation replaced the current folder history')
+  await page.getByRole('button', { name: '读书笔记.md', exact: true }).waitFor()
+  await page.goto(origin)
+  await page.getByRole('button', { name: '个人文档库', exact: true }).waitFor()
+
+  // Route state is the source of truth across fresh WebViews and browser history.
+  // Restore a nondefault account before issuing any account-scoped file requests.
+  await page.getByLabel('账号', { exact: true }).click()
+  await page.getByRole('option', { name: 'work', exact: true }).click()
+  await until(() => new URL(page.url()).searchParams.get('account') === 'work', 'account reflected in URL')
+  await page.getByRole('button', { name: '个人文档库', exact: true }).click()
+  await page.getByRole('button', { name: '工作报告.txt', exact: true }).waitFor()
+  const libraryPath = new URL(page.url()).searchParams.get('path')
+  await page.getByRole('button', { name: '课程资料', exact: true }).click()
+  await page.getByRole('button', { name: '读书笔记.md', exact: true }).waitFor()
+  const folderPath = new URL(page.url()).searchParams.get('path')
+  assert.notEqual(folderPath, libraryPath)
+  await page.reload()
+  await page.getByRole('button', { name: '读书笔记.md', exact: true }).waitFor()
+  assert.equal(new URL(page.url()).searchParams.get('account'), 'work')
+  assert.equal(new URL(page.url()).searchParams.get('path'), folderPath)
+  await page.goBack()
+  await page.getByRole('button', { name: '工作报告.txt', exact: true }).waitFor()
+  assert.equal(new URL(page.url()).searchParams.get('path'), libraryPath)
+  await page.goForward()
+  await page.getByRole('button', { name: '读书笔记.md', exact: true }).waitFor()
+
+  await page.getByRole('button', { name: '高级选项', exact: true }).click()
+  await page.getByRole('checkbox', { name: '仅搜索当前目录', exact: true }).check()
+  await page.getByRole('spinbutton').fill('25')
+  await page.keyboard.press('Escape')
+  await page.getByRole('textbox', { name: '搜索', exact: true }).fill('读书')
+  await page.getByRole('button', { name: '搜索', exact: true }).click()
+  await until(() => new URL(page.url()).searchParams.get('q') === '读书', 'search reflected in URL')
+  assert.equal(new URL(page.url()).searchParams.get('scope'), 'current')
+  assert.equal(new URL(page.url()).searchParams.get('limit'), '25')
+  await page.reload()
+  await page.getByRole('button', { name: '读书笔记.md', exact: true }).waitFor()
+  assert.equal(await page.getByRole('textbox', { name: '搜索', exact: true }).inputValue(), '读书')
+  await page.goBack()
+  await until(async () => (await page.getByRole('textbox', { name: '搜索', exact: true }).inputValue()) === '', 'back restores search input')
+  await page.goForward()
+  await until(async () => (await page.getByRole('textbox', { name: '搜索', exact: true }).inputValue()) === '读书', 'forward restores search input')
+
+  await page.goto(`${origin}/transfers?account=work`)
+  await page.getByRole('tab', { name: '进行中', exact: true }).click()
+  await until(() => new URL(page.url()).searchParams.get('status') === 'active', 'task tab reflected in URL')
+  await page.reload()
+  await page.getByRole('tab', { name: '进行中', exact: true, selected: true }).waitFor()
+  assert.equal(await page.getByLabel('账号', { exact: true }).innerText(), 'work')
+
+  await page.goto(`${origin}/recycle?account=work&library=${encodeURIComponent(libraryPath)}`)
+  await page.getByRole('cell').getByText('已删除的笔记.txt', { exact: true }).waitFor()
+  assert.equal(await page.getByLabel('账号', { exact: true }).innerText(), 'work')
+  assert.equal(new URL(page.url()).searchParams.get('library'), libraryPath)
+  await page.reload()
+  await page.getByRole('cell').getByText('已删除的笔记.txt', { exact: true }).waitFor()
+  assert.equal(new URL(page.url()).searchParams.get('account'), 'work')
+  await takeScreenshot(page, screenshots, 'route-restored-mobile')
+
+  await page.goto(`${origin}/?account=removed-account&path=${encodeURIComponent(folderPath)}&q=stale`)
+  await page.getByRole('button', { name: '个人文档库', exact: true }).waitFor()
+  assert.equal(new URL(page.url()).searchParams.get('account'), 'campus')
+  assert.equal(new URL(page.url()).searchParams.has('path'), false)
+  assert.equal(new URL(page.url()).searchParams.has('q'), false)
+
+  // Folder grouping is independent of the chosen within-group sort direction.
+  // Distinct dates make the mobile sorting control observable without a hidden
+  // desktop-only table column.
+  const datedFiles = async route => {
+    const response = await route.fetch()
+    const body = await response.json()
+    for (const entry of body.entries || []) {
+      entry.modified_at = entry.name === '资料.zip' ? '2026-10-14T12:00:00Z' : '2020-01-01T00:00:00Z'
+    }
+    await route.fulfill({ response, json: body })
+  }
+  await page.route('**/api/files?*', datedFiles)
+  await page.getByRole('button', { name: '个人文档库', exact: true }).click()
+  await page.getByRole('button', { name: '研究报告.txt', exact: true }).waitFor()
+  const fileOrder = () => page.locator('tbody tr td:first-child button[title]').evaluateAll(nodes => nodes.map(node => node.getAttribute('title')))
+  assert.deepEqual(await fileOrder(), ['归档', '课程资料', '研究报告.txt', '资料.zip'])
+  const reportIcon = page.getByRole('button', { name: '研究报告.txt', exact: true }).locator('img')
+  const archiveIcon = page.getByRole('button', { name: '资料.zip', exact: true }).locator('img')
+  assert.match(await reportIcon.getAttribute('src'), /\/material-icons\/document\.svg$/)
+  assert.match(await archiveIcon.getAttribute('src'), /\/material-icons\/zip\.svg$/)
+  await page.getByRole('button', { name: '排序', exact: true }).click()
+  await page.getByRole('combobox', { name: '排序', exact: true }).click()
+  await page.getByRole('option', { name: '修改时间：最新在前', exact: true }).click()
+  await until(async () => JSON.stringify(await fileOrder()) === JSON.stringify(['归档', '课程资料', '资料.zip', '研究报告.txt']), 'newest first within folder groups')
+  await page.getByRole('switch', { name: '文件夹优先', exact: true }).uncheck()
+  await until(async () => (await fileOrder())[0] === '资料.zip', 'newest file can precede folders')
+  await page.keyboard.press('Escape')
+  await takeScreenshot(page, screenshots, 'files-sorted-mobile')
+  await page.reload()
+  await page.getByRole('button', { name: '资料.zip', exact: true }).waitFor()
+  assert.equal((await fileOrder())[0], '资料.zip', 'sort preference was lost after reload')
+  await page.getByRole('button', { name: '排序', exact: true }).click()
+  await page.getByRole('combobox', { name: '排序', exact: true }).click()
+  await page.getByRole('option', { name: '名称：A → Z', exact: true }).click()
+  await page.getByRole('switch', { name: '文件夹优先', exact: true }).check()
+  await page.keyboard.press('Escape')
+  await page.unroute('**/api/files?*', datedFiles)
+
+  // Narrow rows keep the filename as the primary line and move size/date and
+  // actions to a second line. Exercise long CJK, ASCII, and unbroken names at
+  // a compact phone width so the table never introduces horizontal scrolling.
+  const longNames = [
+    '2026年秋季学期课程资料与项目研究归档',
+    '年度研究报告_最终审核版本_请保留完整文件名.pdf',
+    'Design review and implementation notes for October 2026.docx',
+    '20261014_abcdef0123456789abcdef0123456789abcdef0123456789.png'
+  ]
+  const longFiles = async route => {
+    const response = await route.fetch()
+    const body = await response.json()
+    body.entries = longNames.map((name, index) => ({
+      ...body.entries[index % body.entries.length],
+      id: `ux-long-${index}`,
+      name,
+      directory: index === 0,
+      size: 481024,
+      modified_at: '2026-10-14T06:30:00Z',
+      thumbnail: false
+    }))
+    await route.fulfill({ response, json: body })
+  }
+  await page.route('**/api/files?*', longFiles)
+  await page.setViewportSize({ width: 320, height: 844 })
+  await page.reload()
+  for (const name of longNames) await page.locator(`button[title="${name}"]`).waitFor()
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    true,
+    'long mobile filenames introduced horizontal overflow'
+  )
+  for (const name of longNames) {
+    const action = page.locator(`button[aria-label="操作: ${name}"]`).filter({ visible: true })
+    assert.equal(await action.count(), 1, `mobile action menu is missing for ${name}`)
+    const rightEdge = await page.locator(`button[title="${name}"]`).evaluate(node =>
+      node.getBoundingClientRect().right
+    )
+    assert.ok(rightEdge <= 320, `mobile filename row overflows for ${name}`)
+  }
+  await takeScreenshot(page, screenshots, 'long-filenames-mobile')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.unroute('**/api/files?*', longFiles)
+
   await page.goto(`${origin}/recycle`)
-  await page.getByRole('cell', { name: '已删除的笔记.txt', exact: true }).waitFor()
+  await page.getByRole('cell').getByText('已删除的笔记.txt', { exact: true }).waitFor()
   await page.getByRole('textbox', { name: '筛选当前目录…', exact: true }).fill('no-such-recycled-item')
   await page.getByRole('heading', { name: '没有匹配的文件', exact: true }).waitFor()
   assert.equal(await page.getByRole('button', { name: '清空当前列表', exact: true }).isDisabled(), true)
   await takeScreenshot(page, screenshots, 'recycle-filter-empty')
   await page.getByRole('button', { name: '清除', exact: true }).click()
-  await page.getByRole('cell', { name: '已删除的笔记.txt', exact: true }).waitFor()
+  await page.getByRole('cell').getByText('已删除的笔记.txt', { exact: true }).waitFor()
 
   for (const resource of ['recovery', 'files', 'recycle']) {
     const pattern = `**/api/${resource}*`
@@ -66,7 +225,7 @@ try {
     await page.unroute(pattern)
     if (resource === 'recycle') {
       await page.getByRole('button', { name: '刷新', exact: true }).click()
-      await page.getByRole('cell', { name: '已删除的笔记.txt', exact: true }).waitFor()
+      await page.getByRole('cell').getByText('已删除的笔记.txt', { exact: true }).waitFor()
     }
   }
 
@@ -113,7 +272,7 @@ try {
   await takeScreenshot(page, screenshots, 'history-mobile')
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
   assert.deepEqual(errors, [])
-  console.log('GUI UX passed: filtered empty recovery, API error states, retry, driver loading, picker shortcuts, and visible mobile history actions.')
+  console.log('GUI UX passed: URL account/folder/search/tab restoration, browser history, filtered empty recovery, API error states, retry, driver loading, picker shortcuts, and visible mobile history actions.')
 } catch (error) {
   console.error('GUI UX fixture:', output)
   console.error('GUI UX browser errors:', errors)

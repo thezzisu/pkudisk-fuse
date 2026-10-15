@@ -1,6 +1,8 @@
 <resources>
     <string name="intro">正在启动 PKUDisk App…</string>
-    <string name="open_browser">打开界面</string>
+    <string name="startup_retry">重试</string>
+    <string name="startup_service_error">本机服务未能启动，请重试。</string>
+    <string name="startup_browser_error">应用界面未能加载，请重试。</string>
     <string name="stop_service">退出</string>
     <string name="notification_channel_tasks">任务</string>
     <string name="notification_channel_tasks_description">正在执行的文件任务进度</string>
@@ -22,4 +24,5 @@
     <plurals name="notification_active_tasks">
         <item quantity="other">%d 个任务正在进行</item>
     </plurals>
+    <string name="startup_picker_error">系统文件选择器不可用。</string>
 </resources>

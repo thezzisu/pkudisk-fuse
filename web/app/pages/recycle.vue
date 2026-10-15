@@ -6,13 +6,14 @@ import ConfirmModal from '~/components/ConfirmModal.vue'
 
 const { t } = useI18n()
 const { $api } = useNuxtApp()
+const route = useRoute()
+const router = useRouter()
 const workspace = useWorkspaceStore()
 const format = useFormatting()
 const feedback = useFeedback()
 const confirm = useOverlay().create(ConfirmModal)
 const checkbox = resolveComponent('UCheckbox')
 const table = useTemplateRef<{ tableApi: Table<Entry> }>('recycleTable')
-const library = ref('')
 const rename = ref(false)
 const selection = ref<Record<string, boolean>>({})
 const filter = ref('')
@@ -34,9 +35,23 @@ const {
   },
   { default: () => ({ libraries: [] as Entry[], account: '' }), watch: [() => workspace.selected] }
 )
-watch(roots, (value) => {
-  if (!value.libraries.some((entry) => entry.id === library.value))
-    library.value = value.libraries[0]?.id || ''
+const library = computed({
+  get: () => {
+    if (roots.value.account !== workspace.selected) return ''
+    const requested = route.query.library
+    return (
+      roots.value.libraries.find((entry) => entry.id === requested)?.id ||
+      roots.value.libraries[0]?.id ||
+      ''
+    )
+  },
+  set: (value: string) => {
+    void router.push({ query: { ...route.query, library: value || undefined } })
+  }
+})
+watch([roots, () => route.query.library], () => {
+  if (library.value && route.query.library !== library.value)
+    void router.replace({ query: { ...route.query, library: library.value } })
 })
 const { data, status, error, refresh } = useLazyAsyncData(
   'recycle-items',
@@ -76,6 +91,7 @@ watch(data, () => {
 const columns = computed<TableColumn<Entry>[]>(() => [
   {
     id: 'select',
+    meta: { class: { th: 'w-12 md:w-14', td: 'align-top' } },
     header: ({ table }) =>
       h(checkbox, {
         modelValue: table.getIsSomePageRowsSelected()
@@ -84,6 +100,7 @@ const columns = computed<TableColumn<Entry>[]>(() => [
         'onUpdate:modelValue': (value: boolean | 'indeterminate') =>
           table.toggleAllPageRowsSelected(Boolean(value)),
         'aria-label': t('common.selectAll'),
+        ui: { container: 'h-6' },
         disabled: !interactionReady.value || !tableData.value.length
       }),
     cell: ({ row }) =>
@@ -91,7 +108,8 @@ const columns = computed<TableColumn<Entry>[]>(() => [
         modelValue: row.getIsSelected(),
         'onUpdate:modelValue': (value: boolean | 'indeterminate') =>
           row.toggleSelected(Boolean(value)),
-        'aria-label': t('common.selectRow')
+        'aria-label': t('common.selectRow'),
+        ui: { container: 'h-6' }
       })
   },
   { accessorKey: 'name', header: t('common.name') },
@@ -103,12 +121,12 @@ const columns = computed<TableColumn<Entry>[]>(() => [
   {
     accessorKey: 'size',
     header: t('common.size'),
-    meta: { class: { th: 'text-end', td: 'text-end' } }
+    meta: { class: { th: 'hidden text-end md:table-cell', td: 'hidden text-end md:table-cell' } }
   },
   {
     accessorKey: 'modified_at',
     header: t('recycle.deleted'),
-    meta: { class: { th: 'hidden sm:table-cell', td: 'hidden sm:table-cell' } }
+    meta: { class: { th: 'hidden md:table-cell', td: 'hidden md:table-cell' } }
   }
 ])
 const selected = computed<Entry[]>(
@@ -227,18 +245,43 @@ watch(
         :columns="columns"
         :loading="loading"
         :caption="t('recycle.title')"
+        :ui="{
+          base: 'w-full table-fixed md:table-auto',
+          td: 'whitespace-normal py-2 md:py-3'
+        }"
         sticky
         class="min-h-0 flex-1"
         :get-row-id="(row) => row.id"
         :pagination-options="{ getPaginationRowModel: getPaginationRowModel() }"
       >
         <template #name-cell="{ row }">
-          <div class="flex min-w-28 max-w-44 items-center gap-2 sm:max-w-sm">
-            <UIcon
-              :name="row.original.directory ? 'i-lucide-folder' : 'i-lucide-file'"
-              class="text-muted size-4 shrink-0"
-            /><span class="truncate" :title="row.original.name">{{ row.original.name }}</span>
+          <div class="flex min-w-0 items-start gap-2 md:max-w-sm">
+            <FileIcon
+              :name="row.original.name"
+              :directory="row.original.directory"
+              :path="row.original.path"
+              class="mt-0.5 size-5"
+            /><span class="text-highlighted min-w-0 leading-6 [overflow-wrap:anywhere]">{{
+              row.original.name
+            }}</span>
           </div>
+          <p
+            class="text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 ps-7 text-xs leading-4 md:hidden"
+          >
+            <span>{{
+              row.original.directory ? t('files.folder') : format.bytes(row.original.size)
+            }}</span>
+            <template v-if="format.date(row.original.modified_at) !== '—'">
+              <span aria-hidden="true">·</span>
+              <span>{{ format.date(row.original.modified_at) }}</span>
+            </template>
+          </p>
+          <p
+            v-if="row.original.path"
+            class="text-muted mt-0.5 ps-7 text-xs leading-4 [overflow-wrap:anywhere] lg:hidden"
+          >
+            {{ row.original.path }}
+          </p>
         </template>
         <template #path-cell="{ row }">
           <span class="text-muted block max-w-sm truncate text-xs" :title="row.original.path">{{

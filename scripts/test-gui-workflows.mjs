@@ -44,6 +44,9 @@ async function completed(kind) {
   }, `${kind} completion`)
 }
 async function confirm() { await page.getByRole('dialog').last().getByRole('button', { name: '确认', exact: true }).click() }
+async function advanced() {
+  await page.getByRole('dialog').getByRole('button', { name: '高级选项', exact: true }).click()
+}
 async function fileMenu(name, action) {
   await page.getByRole('button', { name: `操作: ${name}`, exact: true }).click()
   const item = page.getByRole('menuitem', { name: action, exact: true })
@@ -135,9 +138,11 @@ try {
   await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click()
   await page.getByRole('button', { name: 'GUI 新目录', exact: true }).waitFor()
   await page.getByRole('button', { name: '上传', exact: true }).click()
+  assert.equal(await page.getByRole('dialog').getByRole('button', { name: '上传', exact: true }).isDisabled(), true)
+  assert.equal(await page.getByRole('dialog').getByRole('spinbutton').filter({ visible: true }).count(), 0, 'advanced upload controls start collapsed')
   await page.getByRole('dialog').locator('input[type=file]').setInputFiles(info.upload)
   await screenshot('browser-upload')
-  await page.getByRole('dialog').getByRole('button', { name: '开始传输', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '上传', exact: true }).click()
   await completed('upload')
   // Completed writes refresh the listing without a manual reload.
   await page.getByRole('button', { name: 'upload.txt', exact: true }).waitFor()
@@ -155,12 +160,14 @@ try {
   await page.getByRole('button', { name: '上传', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: '选择文件夹', exact: true }).click()
   await page.getByRole('dialog').getByText('chosen.txt', { exact: true }).waitFor()
-  await page.getByRole('dialog').getByRole('button', { name: '开始传输', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '上传', exact: true }).click()
   await page.getByRole('button', { name: 'browser-selected-folder', exact: true }).waitFor()
 
   await fileMenu('研究报告.txt', '下载')
+  assert.equal(await page.getByRole('dialog').getByRole('spinbutton').filter({ visible: true }).count(), 0, 'browser download does not need transfer settings')
+  await screenshot('browser-download')
   const downloaded = page.waitForEvent('download')
-  await page.getByRole('dialog').getByRole('button', { name: '开始传输', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '下载', exact: true }).click()
   const download = await downloaded
   assert.equal(download.suggestedFilename(), '研究报告.txt')
   await download.saveAs(join(info.downloads, 'browser-download.txt'))
@@ -170,17 +177,19 @@ try {
   // Directory downloads use the same Go transfer queue on the desktop.
   for (const [mode, directoryName] of [['逐个下载文件和目录', 'direct-local'], ['下载 ZIP 并在本机解压', 'zip-local']]) {
     await fileMenu('课程资料', '下载')
+    await advanced()
     await page.getByRole('dialog').getByRole('button', { name: '保存到本机', exact: true }).click()
     const picker = await browseLocal(info.downloads)
     await createLocalFolder(picker, directoryName)
     await picker.getByRole('button', { name: '选择', exact: true }).click()
     await page.getByRole('dialog').getByRole('combobox', { name: '下载方式', exact: true }).click()
     await page.getByRole('option', { name: mode, exact: true }).click()
-    await page.getByRole('dialog').getByRole('button', { name: '开始传输', exact: true }).click()
+    await page.getByRole('dialog').getByRole('button', { name: '下载', exact: true }).click()
     await until(async () => (await readFile(join(info.downloads, directoryName, '课程资料', '读书笔记.md')).catch(() => null))?.length === 1536, `${directoryName} queued transfer`)
   }
   await writeFile(join(info.downloads, 'queued-upload.txt'), 'uploaded by the shared desktop queue')
   await page.getByRole('button', { name: '上传', exact: true }).click()
+  await advanced()
   await page.getByRole('dialog').getByRole('button', { name: '从本机选择', exact: true }).click()
   const uploadPicker = await browseLocal(info.downloads)
   await uploadPicker.getByRole('button', { name: 'queued-upload.txt', exact: true }).click()
@@ -190,16 +199,17 @@ try {
   const reopenedUploadPicker = page.getByRole('dialog').last()
   await reopenedUploadPicker.getByRole('button', { name: 'queued-upload.txt', exact: true }).click()
   await reopenedUploadPicker.getByRole('button', { name: '选择', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '开始传输', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '上传', exact: true }).click()
   await page.getByRole('button', { name: 'queued-upload.txt', exact: true }).waitFor()
 
   // A desktop fallback uses the same server transfer queue, with no path input.
   await fileMenu('研究报告.txt', '下载')
+  await advanced()
   await page.getByRole('dialog').getByRole('button', { name: '保存到本机', exact: true }).click()
   const downloadPicker = await browseLocal(info.downloads)
   await screenshot('local-picker-download')
   await downloadPicker.getByRole('button', { name: '选择', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '开始传输', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '下载', exact: true }).click()
   await until(async () => (await readFile(join(info.downloads, '研究报告.txt')).catch(() => null))?.length === 1536, 'desktop queued download')
 
   await fileMenu('研究报告.txt', '分享管理')
@@ -219,7 +229,7 @@ try {
   await confirm()
   await closeDialog('历史版本')
   await page.getByRole('link', { name: '回收站', exact: true }).click()
-  await page.getByRole('cell', { name: '已删除的笔记.txt', exact: true }).waitFor()
+  await page.getByRole('cell').getByText('已删除的笔记.txt', { exact: true }).waitFor()
   await page.getByRole('checkbox', { name: '选择此项', exact: true }).first().check()
   await page.getByRole('button', { name: '恢复', exact: true }).click()
   await confirm()

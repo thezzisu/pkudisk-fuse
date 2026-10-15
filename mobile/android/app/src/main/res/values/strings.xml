@@ -1,7 +1,9 @@
 <resources>
     <string name="app_name" translatable="false">PKUDisk App</string>
     <string name="intro">Starting PKUDisk App…</string>
-    <string name="open_browser">Open interface</string>
+    <string name="startup_retry">Retry</string>
+    <string name="startup_service_error">The local service could not start. Please try again.</string>
+    <string name="startup_browser_error">The app view could not be loaded. Please try again.</string>
     <string name="stop_service">Quit</string>
     <string name="notification_channel_tasks">Tasks</string>
     <string name="notification_channel_tasks_description">Progress of active file tasks</string>
@@ -24,4 +26,5 @@
         <item quantity="one">%d active task</item>
         <item quantity="other">%d active tasks</item>
     </plurals>
+    <string name="startup_picker_error">No system file picker is available.</string>
 </resources>

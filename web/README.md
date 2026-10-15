@@ -9,6 +9,19 @@ selected visually through the local picker and transferred by the shared Go
 queue. Mobile downloads use standard streamed HTTP attachments; there is no
 JavaScript archive/download engine or native message bridge.
 
+File lists default to folders first with locale-aware, numeric name ordering.
+The Sort control also offers modification time and size, with an independent
+Folders first switch; preferences persist in cookies. Material Icon Theme's
+official manifest supplies file/folder icons, generated locally by Nuxt's
+`ready` hook and bundled with the static assets. `npm run test:icons` verifies
+association precedence and deterministic generation.
+
+Eligible images and media use the server-generated 96×96 thumbnail endpoint.
+Only visible rows fetch authenticated raster bytes, with four concurrent loads
+and a bounded in-memory LRU cache scoped by account, file and revision. Pending
+generation is checked twice at five-second intervals; unavailable previews keep
+their Material icon. Blob URLs are revoked by VueUse when a row disappears.
+
 Use Node 24 (at least 24.15.0) and the committed npm lockfile:
 
 ```sh
@@ -61,6 +74,10 @@ The isolated fixture below supplies populated data without a real account.
   color plugin's temporary and Unhead-managed style tags. Vaul reads the
   standard `meta[property=csp-nonce]` element. Remove the patch when upstream
   provides equivalent nonce support; the existing browser CSP test covers it.
+  The same patch removes `role="button"` from a non-interactive FileUpload
+  dropzone. With `interactive=false`, only the actual file-picker button is an
+  action; announcing its enclosing container as another button duplicates the
+  accessible control. Remove this hunk when upstream fixes the role condition.
   Color-mode's `disableTransition` is false because its temporary transition
   override style does not support a nonce.
 - API calls use the injected `$api` client, which adds the bearer token and

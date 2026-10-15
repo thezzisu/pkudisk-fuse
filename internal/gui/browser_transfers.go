@@ -341,7 +341,10 @@ func (a *Application) streamDownload(w http.ResponseWriter, r *http.Request, inp
 	}
 	if err != nil {
 		if writer.started {
-			return
+			// Finishing a chunked response would make a truncated ZIP look like a
+			// successful download. The job has joined, so abort only the HTTP
+			// stream; net/http closes HTTP/1 connections or resets HTTP/2 streams.
+			panic(http.ErrAbortHandler)
 		}
 		w.Header().Del("Content-Length")
 		w.Header().Del("Content-Disposition")

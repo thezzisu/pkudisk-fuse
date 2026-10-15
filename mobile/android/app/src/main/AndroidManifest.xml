@@ -16,6 +16,7 @@
         <service android:name=".GuiService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity
             android:name=".MainActivity"
+            android:theme="@style/Theme.App.Starting"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden"
             android:exported="true">

@@ -12,3 +12,7 @@ coverage.out
 /web/.data/
 /web/.cache/
 /web/.env*
+
+# Material Icon Theme assets are generated from the pinned npm package.
+/web/public/material-icons/
+/web/app/generated/material-icons.json

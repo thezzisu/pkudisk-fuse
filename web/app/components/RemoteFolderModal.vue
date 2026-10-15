@@ -45,18 +45,23 @@ function open(entry: Entry) {
         :columns="[{ accessorKey: 'name', header: t('common.name') }]"
         :loading="status === 'pending'"
         :caption="t('files.selectDestination')"
+        :ui="{ base: 'w-full table-fixed', td: 'whitespace-normal py-1 md:py-3' }"
         class="max-h-80"
       >
         <template #name-cell="{ row }">
           <UButton
-            icon="i-lucide-folder"
             :label="row.original.name"
+            :aria-label="row.original.name"
             color="neutral"
             variant="link"
-            class="max-w-full px-0"
-            :ui="{ label: 'truncate' }"
+            class="min-h-11 w-full items-start justify-start gap-2 px-0 py-2.5 text-start md:min-h-0 md:py-1.5"
+            :ui="{ label: 'min-w-0 whitespace-normal leading-6 [overflow-wrap:anywhere]' }"
             @click="open(row.original)"
-          />
+          >
+            <template #leading>
+              <FileIcon :name="row.original.name" directory class="mt-0.5 size-5" />
+            </template>
+          </UButton>
         </template>
         <template #empty>
           <div>

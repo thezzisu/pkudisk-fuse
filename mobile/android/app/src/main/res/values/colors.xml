@@ -1,0 +1,5 @@
+<resources>
+    <color name="startup_background">#ffffff</color>
+    <color name="startup_text">#18181b</color>
+    <color name="startup_accent">#a8002f</color>
+</resources>

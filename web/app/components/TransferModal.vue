@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import * as z from 'zod'
-import { fileOpen, directoryOpen } from 'browser-fs-access'
+import { directoryOpen } from 'browser-fs-access'
 import type { Entry } from '~/types/api'
 import RemoteFolderModal from '~/components/RemoteFolderModal.vue'
 import LocalPickerModal from '~/components/LocalPickerModal.vue'
@@ -19,6 +19,9 @@ const { $api } = useNuxtApp()
 const workspace = useWorkspaceStore()
 const browser = useBrowserTransfersStore()
 const feedback = useFeedback()
+const format = useFormatting()
+const isMobile = computed(() => workspace.flags.isMobile)
+const canBrowseLocal = computed(() => !isMobile.value && workspace.flags.canBrowseLocalFS)
 const folderPicker = useOverlay().create(RemoteFolderModal)
 const localPicker = useOverlay().create(LocalPickerModal)
 const localSource = ref('')
@@ -37,17 +40,20 @@ const destinationDisplay = computed(() => destinationLabel.value || state.destin
 const error = ref<unknown>(null)
 const busy = ref(false)
 const formId = useId()
+const ready = computed(
+  () =>
+    props.kind !== 'upload' || !!props.recoverySource || !!localSource.value || !!files.value.length
+)
+const hasAdvanced = computed(() => props.kind !== 'download' || canBrowseLocal.value)
 const schema = computed(() =>
   z.object({
     destination: props.kind === 'download' ? z.string() : z.string().min(1, t('common.required')),
     timeoutSeconds: z.number().int().min(1).max(86400)
   })
 )
-async function selectFiles(directory = false) {
+async function selectDirectory() {
   try {
-    const selected = directory
-      ? await directoryOpen({ recursive: true })
-      : await fileOpen({ multiple: true })
+    const selected = await directoryOpen({ recursive: true })
     localSource.value = ''
     files.value = [...files.value, ...selected]
   } catch (err) {
@@ -102,6 +108,7 @@ async function queueLocal() {
   await workspace.refreshTasks()
 }
 async function submit() {
+  if (!ready.value) return
   busy.value = true
   error.value = null
   try {
@@ -159,74 +166,97 @@ async function submit() {
 <template>
   <UModal
     :title="t(`tasks.kinds.${kind}`)"
-    :description="`${account} · ${entry?.name || t('files.selectFiles')}`"
+    :description="`${t('common.account')}: ${account}`"
     :close="{ onClick: () => emit('close', false) }"
+    :ui="{ footer: 'justify-end' }"
   >
     <template #body>
       <UForm :id="formId" :state="state" :schema="schema" class="space-y-5" @submit="submit">
         <OperationError v-if="error" :error="error" />
-        <template v-if="kind === 'upload' && !recoverySource">
-          <UFormField name="files" :label="t('files.source')" required>
-            <UFileUpload
-              v-if="!localSource"
-              v-model="files"
-              multiple
-              layout="list"
-              :file-image="false"
-              :interactive="true"
-              :label="t('files.dropFiles')"
-              :description="t('files.browserUploadHint')"
-              class="w-full"
-              :ui="{ files: 'max-h-52 overflow-y-auto' }"
-            >
-              <template #actions>
-                <UButton
-                  icon="i-lucide-file-plus"
-                  :label="t('files.localFiles')"
-                  color="neutral"
-                  variant="outline"
-                  @click.stop="selectFiles()"
-                />
-                <UButton
-                  icon="i-lucide-folder-plus"
-                  :label="t('files.localFolder')"
-                  color="neutral"
-                  variant="outline"
-                  @click.stop="selectFiles(true)"
-                />
-              </template>
-            </UFileUpload>
-            <div v-else class="bg-muted flex items-center gap-2 rounded-md px-3 py-2">
-              <UIcon name="i-lucide-file" class="size-4 shrink-0" />
-              <span class="min-w-0 flex-1 break-all text-sm">{{ localSource }}</span>
+        <UFormField
+          v-if="kind === 'upload' && !recoverySource"
+          name="files"
+          :label="t('files.uploadFiles')"
+          required
+        >
+          <UFileUpload
+            v-if="!localSource"
+            v-model="files"
+            multiple
+            layout="list"
+            :file-image="false"
+            :dropzone="!isMobile"
+            :interactive="false"
+            :icon="isMobile ? false : 'i-lucide-upload'"
+            :label="isMobile ? undefined : t('files.dropFiles')"
+            class="w-full"
+            :ui="{
+              files: 'max-h-48 overflow-y-auto',
+              ...(isMobile ? { base: 'border-0 p-0', wrapper: 'p-0', actions: 'mt-0 w-full' } : {})
+            }"
+          >
+            <template #file-leading="{ file }">
+              <FileIcon :name="file.name" />
+            </template>
+            <template #actions="{ open }">
               <UButton
-                icon="i-lucide-x"
-                :aria-label="t('common.cancel')"
+                icon="i-lucide-file-plus"
+                :label="t('files.localFiles')"
+                :block="isMobile"
                 color="neutral"
-                variant="ghost"
-                @click="localSource = ''"
+                variant="outline"
+                @click="open()"
               />
-            </div>
+              <UButton
+                v-if="!isMobile"
+                icon="i-lucide-folder-plus"
+                :label="t('files.localFolder')"
+                color="neutral"
+                variant="outline"
+                @click="selectDirectory"
+              />
+            </template>
+          </UFileUpload>
+          <div v-else class="flex items-center gap-2">
             <UButton
-              v-if="workspace.flags.canBrowseLocalFS"
               icon="i-lucide-hard-drive"
-              :label="t('localPicker.backgroundUpload')"
+              :label="localSource"
               color="neutral"
               variant="outline"
-              class="mt-3"
+              class="min-w-0 flex-1"
+              :ui="{ label: 'truncate' }"
               @click="local"
             />
-          </UFormField>
-        </template>
-        <div
-          v-else
-          class="bg-muted text-highlighted flex items-center gap-2 rounded-md px-3 py-2 text-sm"
-        >
-          <UIcon
-            :name="entry?.directory ? 'i-lucide-folder' : 'i-lucide-file'"
-            class="size-4 shrink-0"
-          />
-          <span class="break-all">{{ entry?.name || t('files.selectFiles') }}</span>
+            <UButton
+              icon="i-lucide-x"
+              :aria-label="t('common.remove')"
+              color="neutral"
+              variant="ghost"
+              @click="localSource = ''"
+            />
+          </div>
+          <p class="text-muted mt-2 text-xs">
+            {{
+              t(
+                localSource
+                  ? 'localPicker.backgroundHint'
+                  : isMobile
+                    ? 'files.mobileUploadHint'
+                    : 'files.browserUploadHint'
+              )
+            }}
+          </p>
+        </UFormField>
+        <div v-else class="flex items-center gap-3">
+          <FileIcon :name="entry?.name || ''" :directory="entry?.directory" class="size-6" />
+          <div class="min-w-0">
+            <p class="text-highlighted break-all text-sm font-medium">
+              {{ entry?.name || t('files.selectFiles') }}
+            </p>
+            <p v-if="entry && !entry.directory" class="text-muted text-xs">
+              {{ format.bytes(entry.size) }}
+            </p>
+          </div>
         </div>
         <UFormField
           v-if="kind !== 'download'"
@@ -234,101 +264,118 @@ async function submit() {
           :label="t('files.destination')"
           required
         >
-          <UFieldGroup class="w-full">
-            <UInput
-              :model-value="destinationDisplay"
-              readonly
-              class="min-w-0 flex-1"
-              @click="remote"
-            />
-            <UButton
-              icon="i-lucide-folder-search"
-              :label="t('common.browse')"
-              color="neutral"
-              variant="outline"
-              @click="remote"
-            />
-          </UFieldGroup>
+          <UButton
+            icon="i-lucide-folder"
+            trailing-icon="i-lucide-chevron-right"
+            :label="destinationDisplay || t('files.selectDestination')"
+            :aria-label="`${t('files.destination')}: ${destinationDisplay || t('common.choose')}`"
+            color="neutral"
+            variant="outline"
+            class="w-full justify-start"
+            :ui="{ label: 'truncate', trailingIcon: 'ms-auto' }"
+            @click="remote"
+          />
         </UFormField>
         <template v-else>
-          <UFormField
-            v-if="entry?.directory && localDestination"
-            :label="t('files.downloadMode')"
-            name="mode"
-          >
-            <USelect
-              v-model="state.mode"
-              :items="[
-                { label: t('files.archive'), value: 'archive' },
-                {
-                  label: t('files.direct'),
-                  value: 'direct'
-                },
-                {
-                  label: t('files.viaArchive'),
-                  value: 'viaArchive'
-                }
-              ]"
-              class="w-full"
-            />
-          </UFormField>
-          <div v-if="workspace.flags.canBrowseLocalFS" class="space-y-2">
-            <UFieldGroup v-if="localDestination" class="w-full">
-              <UInput
-                :model-value="localDestination"
-                readonly
-                class="min-w-0 flex-1"
-                @click="local"
-              />
-              <UButton
-                :label="t('common.browse')"
-                icon="i-lucide-folder-search"
-                color="neutral"
-                variant="outline"
-                @click="local"
-              />
-              <UButton
-                icon="i-lucide-x"
-                :aria-label="t('localPicker.browser')"
-                color="neutral"
-                variant="outline"
-                @click="useBrowserDownload"
-              />
-            </UFieldGroup>
+          <UFormField v-if="localDestination" :label="t('files.destination')">
             <UButton
-              v-else
-              :label="t('localPicker.backgroundDownload')"
-              icon="i-lucide-hard-drive"
+              icon="i-lucide-folder"
+              trailing-icon="i-lucide-chevron-right"
+              :label="localDestination"
               color="neutral"
               variant="outline"
+              class="w-full justify-start"
+              :ui="{ label: 'truncate', trailingIcon: 'ms-auto' }"
               @click="local"
             />
-          </div>
+          </UFormField>
           <p class="text-muted text-sm">
-            {{ t(localDestination ? 'localPicker.backgroundHint' : 'files.browserDownloadHint') }}
+            {{
+              t(
+                localDestination
+                  ? 'localPicker.backgroundHint'
+                  : entry?.directory
+                    ? isMobile
+                      ? 'files.mobileFolderDownloadHint'
+                      : 'files.browserFolderDownloadHint'
+                    : isMobile
+                      ? 'files.mobileDownloadHint'
+                      : 'files.browserDownloadHint'
+              )
+            }}
           </p>
         </template>
-        <UCheckbox
-          v-if="kind === 'upload' || (kind === 'download' && state.mode !== 'browser')"
-          v-model="state.overwrite"
-          :label="t('files.overwrite')"
-          :description="t('files.overwriteHint')"
-        />
-        <UCheckbox
-          v-if="kind === 'upload'"
-          v-model="state.fast"
-          :label="t('files.fast')"
-          :description="t('files.fastHint')"
-        />
         <UAlert
           v-if="kind === 'extract' || kind === 'copy'"
           color="neutral"
           variant="subtle"
           :description="t(kind === 'extract' ? 'files.extractHint' : 'files.copyHint')"
         />
-        <UFormField name="timeoutSeconds" :label="t('common.timeout')">
-          <UInputNumber v-model="state.timeoutSeconds" :min="1" :max="86400" class="w-full" />
-        </UFormField>
+        <UCollapsible v-if="hasAdvanced">
+          <UButton
+            :label="t('common.advanced')"
+            trailing-icon="i-lucide-chevron-down"
+            color="neutral"
+            variant="ghost"
+            class="px-0"
+          />
+          <template #content>
+            <div class="mt-3 space-y-4">
+              <UButton
+                v-if="canBrowseLocal && !recoverySource && kind === 'upload'"
+                icon="i-lucide-hard-drive"
+                :label="t('localPicker.backgroundUpload')"
+                color="neutral"
+                variant="outline"
+                @click="local"
+              />
+              <UButton
+                v-if="canBrowseLocal && kind === 'download'"
+                :icon="localDestination ? 'i-lucide-globe' : 'i-lucide-hard-drive'"
+                :label="
+                  t(localDestination ? 'localPicker.browser' : 'localPicker.backgroundDownload')
+                "
+                color="neutral"
+                variant="outline"
+                @click="localDestination ? useBrowserDownload() : local()"
+              />
+              <UFormField
+                v-if="kind === 'download' && entry?.directory && localDestination"
+                :label="t('files.downloadMode')"
+                name="mode"
+              >
+                <USelect
+                  v-model="state.mode"
+                  :items="[
+                    { label: t('files.direct'), value: 'direct' },
+                    { label: t('files.archive'), value: 'archive' },
+                    { label: t('files.viaArchive'), value: 'viaArchive' }
+                  ]"
+                  class="w-full"
+                />
+              </UFormField>
+              <UCheckbox
+                v-if="kind === 'upload' || (kind === 'download' && localDestination)"
+                v-model="state.overwrite"
+                :label="t('files.overwrite')"
+                :description="t('files.overwriteHint')"
+              />
+              <UCheckbox
+                v-if="kind === 'upload'"
+                v-model="state.fast"
+                :label="t('files.fast')"
+                :description="t('files.fastHint')"
+              />
+              <UFormField
+                v-if="kind !== 'download' || localDestination"
+                name="timeoutSeconds"
+                :label="t('common.timeout')"
+              >
+                <UInputNumber v-model="state.timeoutSeconds" :min="1" :max="86400" class="w-full" />
+              </UFormField>
+            </div>
+          </template>
+        </UCollapsible>
       </UForm>
     </template>
     <template #footer>
@@ -338,7 +385,13 @@ async function submit() {
         variant="outline"
         @click="emit('close', false)"
       />
-      <UButton type="submit" :form="formId" :label="t('files.startTransfer')" :loading="busy" />
+      <UButton
+        type="submit"
+        :form="formId"
+        :label="t(`tasks.kinds.${kind}`)"
+        :loading="busy"
+        :disabled="!ready"
+      />
     </template>
   </UModal>
 </template>

@@ -4,6 +4,7 @@ import type { AuthFormField, FormSubmitEvent } from '@nuxt/ui'
 import type { LoginAttempt } from '~/types/api'
 
 const workspace = useWorkspaceStore()
+const selectAccount = useAccountNavigation()
 const { $api } = useNuxtApp()
 const { t } = useI18n()
 const feedback = useFeedback()
@@ -72,7 +73,7 @@ const poll = useIntervalFn(
       if (attempt.value.state === 'completed') {
         poll.pause()
         await workspace.refreshAccounts()
-        workspace.selected = attempt.value.account
+        await selectAccount(attempt.value.account)
         workspace.loginOpen = false
         feedback.success()
       } else if (['failed', 'cancelled'].includes(attempt.value.state)) {

@@ -5,6 +5,18 @@ The Nuxt / Nuxt UI interface supports Chinese and English, light and dark
 themes, and the same netdisk operations as the CLI/TUI. Choose the language
 and theme in the toolbar or Settings. Saved accounts are shared with the CLI.
 
+Files default to folders first, then names in natural order. **Sort** supports
+name, modification time and size in either direction, and **Folders first** can
+be switched off independently. These preferences are retained across visits.
+Material Icon Theme distinguishes file formats; eligible images and media show
+the official service's small thumbnail when available, falling back to the file
+icon while unavailable. PDFs and Office documents retain their format icons.
+
+Upload and download dialogs show the selected files and destination first.
+Overwrite, instant-upload, timeout and desktop local-transfer alternatives are
+under **Advanced**. Mobile downloads use a short confirmation and the system's
+Downloads folder.
+
 | Interface | Operations |
 | --- | --- |
 | Accounts | Campus login, CAPTCHA/OTP/SMS verification, account switching, default selection, login replacement and removal |

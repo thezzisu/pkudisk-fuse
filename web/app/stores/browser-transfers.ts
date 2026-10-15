@@ -7,13 +7,31 @@ export const useBrowserTransfersStore = defineStore('browser-transfers', () => {
   const { $api, $checkConnection } = useNuxtApp()
   const session = useState<SessionState>('local-session')
   const uploads = shallowRef<Job[]>([])
-  const uppy = new Uppy({ autoProceed: true, restrictions: { maxNumberOfFiles: 10000 } })
+  const uppy = new Uppy({
+    autoProceed: true,
+    restrictions: { maxNumberOfFiles: 10000 },
+    // Uppy derives local IDs from the filename and bytes, ignoring addFile.id.
+    // A transfer attempt needs its own ID so uploading the same file to another
+    // folder (or retrying it) does not collide with an earlier task.
+    onBeforeFileAdded: (file) => ({ ...file, id: String(file.meta.clientId) })
+  })
   uppy.use(XHRUpload, {
     endpoint: '/api/uploads',
     fieldName: 'file',
     limit: 2,
     timeout: 0,
     shouldRetry: () => false,
+    onAfterResponse(xhr) {
+      if (xhr.status < 400) return
+      const detail = (() => {
+        try {
+          return JSON.parse(xhr.responseText)?.error
+        } catch {
+          return null
+        }
+      })()
+      if (typeof detail?.message === 'string') throw new Error(detail.message)
+    },
     allowedMetaFields: [
       'account',
       'destination',
@@ -73,7 +91,6 @@ export const useBrowserTransfersStore = defineStore('browser-transfers', () => {
     for (const file of files) {
       const id = crypto.randomUUID()
       uppy.addFile({
-        id,
         name: file.name,
         type: file.type,
         data: file,
@@ -81,7 +98,13 @@ export const useBrowserTransfersStore = defineStore('browser-transfers', () => {
           ...options,
           clientId: id,
           relativePath: file.webkitRelativePath || file.name,
-          lastModified: file.lastModified,
+          // Android content providers can expose an unknown timestamp as the
+          // Chromium 1601 epoch sentinel. Preserve valid metadata and use the
+          // selection time when the provider has none; file bytes are unchanged.
+          lastModified:
+            Number.isFinite(file.lastModified) && file.lastModified >= 0
+              ? Math.trunc(file.lastModified)
+              : Date.now(),
           created: new Date().toISOString()
         }
       })

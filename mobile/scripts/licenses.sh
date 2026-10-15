@@ -24,6 +24,7 @@ cp "$mobile_dir/licenses/"* "$output/android/"
 cp "$project_dir/internal/gui/web/THIRD_PARTY_LICENSES.txt" \
     "$project_dir/internal/gui/web/NUXT_UI_STARTER_LICENSE.txt" \
     "$project_dir/internal/gui/web/LUCIDE_LICENSE.txt" "$output/web/"
+cp "$project_dir/internal/gui/web/material-icons/LICENSE.txt" "$output/web/MATERIAL_ICON_THEME_LICENSE.txt"
 
 cd "$mobile_dir/android"
 ./gradlew --console=plain -q :app:dependencies --configuration releaseRuntimeClasspath \
